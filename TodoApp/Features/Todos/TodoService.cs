@@ -41,7 +41,7 @@ public static class TodoService<M, RT>
         from _ in Logger<M, RT>.logInfo($"Getting todo by ID: {id}")
         from todoOpt in Database<M, RT>.liftIO((ctx, ct) =>
             ctx.Todos.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct)
-                .ContinueWith(t => Optional(t.Result), ct))
+                .Map(t => Optional(t.Result)))
         from todo in todoOpt.Match(
             Some: t => M.Pure(t),
             None: () => M.Fail<Todo>(Error.New(404, $"Todo with id {id} not found")))
@@ -51,71 +51,56 @@ public static class TodoService<M, RT>
     /// <summary>
     /// Create a new todo with validation.
     /// Pattern:
-    /// - Create entity inline within database operation (no M.Pure needed)
-    /// - Use Validation.ToEff() for validation errors
+    /// - Use M.Pure to create entity
+    /// - Use Validation.Match to return M.Pure or M.Fail (purely functional!)
+    /// - No exceptions needed!
     /// </summary>
     public static K<M, Todo> Create(string title, string? description) =>
         from _ in Logger<M, RT>.logInfo($"Creating todo: {title}")
-        from todo in Database<M, RT>.liftIO((ctx, ct) =>
+        from newTodo in M.Pure(new Todo
         {
-            var newTodo = new Todo
-            {
-                Title = title,
-                Description = description,
-                IsCompleted = false,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            // Validate inline
-            var validation = TodoValidation.Validate(newTodo);
-            if (validation.IsFail)
-            {
-                // Match to extract error message
-                var errorMessage = validation.Match(
-                    Succ: _ => "",
-                    Fail: error => error.Message);
-                throw new InvalidOperationException(errorMessage);
-            }
-
-            ctx.Todos.Add(newTodo);
-            return ctx.SaveChangesAsync(ct).ContinueWith(_ => newTodo, ct);
+            Title = title,
+            Description = description,
+            IsCompleted = false,
+            CreatedAt = DateTime.UtcNow
         })
-        from __ in Logger<M, RT>.logInfo($"Created todo with ID: {todo.Id}")
-        select todo;
+        from validated in TodoValidation.Validate(newTodo).Match(
+            Succ: _ => M.Pure(newTodo),
+            Fail: err => M.Fail<Todo>(err))
+        from saved in Database<M, RT>.liftIO((ctx, ct) =>
+        {
+            ctx.Todos.Add(validated);
+            return ctx.SaveChangesAsync(ct).Map(_ => validated);
+        })
+        from __ in Logger<M, RT>.logInfo($"Created todo with ID: {saved.Id}")
+        select saved;
 
     /// <summary>
     /// Update an existing todo with validation.
-    /// Pattern: Combines Get (not-found handling) with inline update and validation
+    /// Pattern:
+    /// - Get existing (with 404 handling)
+    /// - Use M.Pure to create updated entity
+    /// - Use Validation.Match for functional validation
+    /// - No exceptions!
     /// </summary>
     public static K<M, Todo> Update(int id, string title, string? description) =>
         from _ in Logger<M, RT>.logInfo($"Updating todo {id}")
         from existing in Get(id)
-        from updated in Database<M, RT>.liftIO((ctx, ct) =>
+        from updatedTodo in M.Pure(existing with
         {
-            // Create updated entity
-            var updatedTodo = existing with
-            {
-                Title = title,
-                Description = description
-            };
-
-            // Validate inline
-            var validation = TodoValidation.Validate(updatedTodo);
-            if (validation.IsFail)
-            {
-                // Match to extract error message
-                var errorMessage = validation.Match(
-                    Succ: _ => "",
-                    Fail: error => error.Message);
-                throw new InvalidOperationException(errorMessage);
-            }
-
-            // Update entity
-            ctx.Entry(updatedTodo).State = EntityState.Modified;
-            return ctx.SaveChangesAsync(ct).ContinueWith(_ => updatedTodo, ct);
+            Title = title,
+            Description = description
+        })
+        from validated in TodoValidation.Validate(updatedTodo).Match(
+            Succ: _ => M.Pure(updatedTodo),
+            Fail: err => M.Fail<Todo>(err))
+        from saved in Database<M, RT>.liftIO((ctx, ct) =>
+        {
+            ctx.Entry(validated).State = EntityState.Modified;
+            return ctx.SaveChangesAsync(ct).Map(_ => validated);
         })
         from __ in Logger<M, RT>.logInfo($"Updated todo {id}")
-        select updated;
+        select saved;
 
     /// <summary>
     /// Toggle completion status of a todo.
@@ -135,7 +120,7 @@ public static class TodoService<M, RT>
 
             // Update entity
             ctx.Entry(toggledTodo).State = EntityState.Modified;
-            return ctx.SaveChangesAsync(ct).ContinueWith(_ => toggledTodo, ct);
+            return ctx.SaveChangesAsync(ct).Map(_ => toggledTodo);
         })
         from __ in Logger<M, RT>.logInfo($"Todo {id} marked as {(updated.IsCompleted ? "completed" : "incomplete")}")
         select updated;
@@ -150,7 +135,7 @@ public static class TodoService<M, RT>
         from __ in Database<M, RT>.liftIO((ctx, ct) =>
         {
             ctx.Todos.Remove(existing);
-            return ctx.SaveChangesAsync(ct).ContinueWith(_ => unit, ct);
+            return ctx.SaveChangesAsync(ct).Map(_ => unit);
         })
         from ___ in Logger<M, RT>.logInfo($"Deleted todo {id}")
         select unit;
