@@ -8,7 +8,22 @@
       "Bash(npm create:*)",
       "Bash(npm install)",
       "Bash(npm run build:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(git checkout:*)",
+      "Bash(dotnet add package LanguageExt.Core --version 5.0.0-beta-54)",
+      "Bash(dotnet add package Microsoft.EntityFrameworkCore --version 9.0.0)",
+      "Bash(dotnet add package Microsoft.EntityFrameworkCore.Sqlite --version 9.0.0)",
+      "Bash(dotnet new console -n HasAskTest -f net8.0)",
+      "Bash(dotnet run)",
+      "Bash(timeout 15 dotnet run)",
+      "Bash(curl -X GET http://localhost:5000/todos)",
+      "Bash(curl http://localhost:5050/todos)",
+      "Bash(taskkill /F /IM dotnet.exe)",
+      "Bash(taskkill //F //IM dotnet.exe)",
+      "Bash(find . -maxdepth 2 -type d ( -name \"*Experimental*\" -o -name \"*disabled*\" -o -name \"*Struct*\" -o -name \"*Clean*\" ))",
+      "Bash(echo \"Removed Db<A> monad files\")",
+      "Bash(git add TodoApp/Features/Todos/TodoServiceSimple.cs TodoApp/Infrastructure/Capabilities/CancellationTokenCapability.cs TodoApp/Infrastructure/Live/LiveCancellationTokenIO.cs TodoApp/Infrastructure/Traits/CancellationTokenIO.cs TodoApp/MIGRATION-TO-HAS-ASK-REPORT.md CLEANUP-SUMMARY.md FINAL-SOLUTION-HAS-ASK-PATTERN.md TodoApp/API-TEST-SUCCESS-REPORT.md TodoApp/HAS-ASK-PATTERN-SUCCESS.md)",
+      "Bash(git add TodoApp/Infrastructure/AppRuntime.cs TodoApp/Infrastructure/Capabilities/Database.cs TodoApp/Infrastructure/Capabilities/Logger.cs TodoApp/Infrastructure/Extensions/LoggingExtensions.cs TodoApp/Infrastructure/Extensions/MetricsExtensions.cs TodoApp/Infrastructure/Live/LiveDatabaseIO.cs TodoApp/Infrastructure/Live/LiveLoggerIO.cs TodoApp/Infrastructure/Traits/DatabaseIO.cs TodoApp/Infrastructure/Traits/LoggerIO.cs TodoApp/Program.cs functional-guide-eff.md .claude/settings.local.json)"
     ],
     "deny": [],
     "ask": []
