@@ -1,12 +1,14 @@
+using LanguageExt;
+
 namespace TodoApp.Infrastructure.Traits;
 
 /// <summary>
 /// Logging capability trait.
-/// Simple interface with plain methods - no IO or Eff wrappers needed!
+/// Returns Unit instead of void for proper functional composition.
 /// </summary>
 public interface LoggerIO
 {
-    void LogInfo(string message);
-    void LogWarning(string message);
-    void LogError(string message, Exception? ex = null);
+    Unit LogInfo(string message);
+    Unit LogWarning(string message);
+    Unit LogError(string message, Exception? ex = null);
 }

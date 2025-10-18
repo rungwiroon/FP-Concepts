@@ -1,20 +1,31 @@
+using LanguageExt;
 using Microsoft.Extensions.Logging;
 using TodoApp.Infrastructure.Traits;
+using static LanguageExt.Prelude;
 
 namespace TodoApp.Infrastructure.Live;
 
 /// <summary>
 /// Production implementation of LoggerIO wrapping ILogger.
-/// Simple wrapper - no IO or Eff wrapping needed!
+/// Returns Unit for proper functional composition.
 /// </summary>
 public class LiveLoggerIO(ILogger logger) : LoggerIO
 {
-    public void LogInfo(string message) =>
+    public Unit LogInfo(string message)
+    {
         logger.LogInformation(message);
+        return unit;
+    }
 
-    public void LogWarning(string message) =>
+    public Unit LogWarning(string message)
+    {
         logger.LogWarning(message);
+        return unit;
+    }
 
-    public void LogError(string message, Exception? ex = null) =>
+    public Unit LogError(string message, Exception? ex = null)
+    {
         logger.LogError(ex, message);
+        return unit;
+    }
 }

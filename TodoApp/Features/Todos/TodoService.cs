@@ -4,6 +4,7 @@ using LanguageExt.Traits;
 using Microsoft.EntityFrameworkCore;
 using TodoApp.Domain;
 using TodoApp.Infrastructure.Capabilities;
+using TodoApp.Infrastructure.Extensions;
 using TodoApp.Infrastructure.Traits;
 using static LanguageExt.Prelude;
 
@@ -12,14 +13,10 @@ namespace TodoApp.Features.Todos;
 /// <summary>
 /// TodoService using Has<M, RT, T>.ask pattern with full CRUD operations.
 /// Generic over M (monad) and RT (runtime with capabilities).
-/// All operations migrated from Db<A> pattern using the research document patterns:
-/// - Optional().ToEff() for not-found handling
-/// - Validation<Error, A>.ToEff() for validation
-/// - Inline entity creation within database operations
 /// </summary>
 public static class TodoService<M, RT>
     where M : Monad<M>, MonadIO<M>, Fallible<M>
-    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>, Has<M, TimeIO>
 {
     /// <summary>
     /// List all todos ordered by creation date (newest first).
@@ -34,17 +31,16 @@ public static class TodoService<M, RT>
     /// <summary>
     /// Get a single todo by ID.
     /// Returns error if not found (404).
-    /// Pattern: Optional() + match for not-found handling
+    /// Pattern: Optional() + .To<M, A>() for not-found handling
     /// Uses AsNoTracking() to avoid EF Core tracking conflicts
     /// </summary>
     public static K<M, Todo> Get(int id) =>
         from _ in Logger<M, RT>.logInfo($"Getting todo by ID: {id}")
-        from todoOpt in Database<M, RT>.liftIO((ctx, ct) =>
-            ctx.Todos.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct)
-                .Map(t => Optional(t.Result)))
-        from todo in todoOpt.Match(
-            Some: t => M.Pure(t),
-            None: () => M.Fail<Todo>(Error.New(404, $"Todo with id {id} not found")))
+        from todo in Database<M, RT>.liftIO((ctx, ct) =>
+            ctx.Todos.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == id, ct)
+                .Map(Optional))
+            .Bind(opt => opt.To<M, Todo>(() => Error.New(404, $"Todo with id {id} not found")))
         from __ in Logger<M, RT>.logInfo($"Found todo: {todo.Title}")
         select todo;
 
@@ -52,21 +48,20 @@ public static class TodoService<M, RT>
     /// Create a new todo with validation.
     /// Pattern:
     /// - Use M.Pure to create entity
-    /// - Use Validation.Match to return M.Pure or M.Fail (purely functional!)
+    /// - Use .To<M, A>() extension to convert Validation to K<M, A> (purely functional!)
     /// - No exceptions needed!
     /// </summary>
     public static K<M, Todo> Create(string title, string? description) =>
         from _ in Logger<M, RT>.logInfo($"Creating todo: {title}")
+        from now in Time<M, RT>.getUtcNow
         from newTodo in M.Pure(new Todo
         {
             Title = title,
             Description = description,
             IsCompleted = false,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = now
         })
-        from validated in TodoValidation.Validate(newTodo).Match(
-            Succ: _ => M.Pure(newTodo),
-            Fail: err => M.Fail<Todo>(err))
+        from validated in TodoValidation.Validate(newTodo).To<M, Todo>()
         from saved in Database<M, RT>.liftIO((ctx, ct) =>
         {
             ctx.Todos.Add(validated);
@@ -80,7 +75,7 @@ public static class TodoService<M, RT>
     /// Pattern:
     /// - Get existing (with 404 handling)
     /// - Use M.Pure to create updated entity
-    /// - Use Validation.Match for functional validation
+    /// - Use .To<M, A>() extension for functional validation
     /// - No exceptions!
     /// </summary>
     public static K<M, Todo> Update(int id, string title, string? description) =>
@@ -91,9 +86,7 @@ public static class TodoService<M, RT>
             Title = title,
             Description = description
         })
-        from validated in TodoValidation.Validate(updatedTodo).Match(
-            Succ: _ => M.Pure(updatedTodo),
-            Fail: err => M.Fail<Todo>(err))
+        from validated in TodoValidation.Validate(updatedTodo).To<M, Todo>()
         from saved in Database<M, RT>.liftIO((ctx, ct) =>
         {
             ctx.Entry(validated).State = EntityState.Modified;
@@ -109,13 +102,14 @@ public static class TodoService<M, RT>
     public static K<M, Todo> ToggleComplete(int id) =>
         from _ in Logger<M, RT>.logInfo($"Toggling completion for todo {id}")
         from existing in Get(id)
+        from now in Time<M, RT>.getUtcNow
         from updated in Database<M, RT>.liftIO((ctx, ct) =>
         {
             // Create toggled entity
             var toggledTodo = existing with
             {
                 IsCompleted = !existing.IsCompleted,
-                CompletedAt = !existing.IsCompleted ? DateTime.UtcNow : null
+                CompletedAt = !existing.IsCompleted ? now : null
             };
 
             // Update entity

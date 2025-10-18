@@ -15,7 +15,8 @@ namespace TodoApp.Infrastructure;
 public record AppRuntime(IServiceProvider Services) :
     Has<Eff<AppRuntime>, LoggerIO>,
     Has<Eff<AppRuntime>, DatabaseIO>,
-    Has<Eff<AppRuntime>, CancellationTokenIO>
+    Has<Eff<AppRuntime>, CancellationTokenIO>,
+    Has<Eff<AppRuntime>, TimeIO>
 {
     /// <summary>
     /// Implements Has<Eff<AppRuntime>, LoggerIO> by lifting the live implementation into an effect.
@@ -56,4 +57,11 @@ public record AppRuntime(IServiceProvider Services) :
                 : CancellationToken.None;
             return new LiveCancellationTokenIO(ct);
         }));
+
+    /// <summary>
+    /// Implements Has<Eff<AppRuntime>, TimeIO> by lifting the live implementation into an effect.
+    /// Uses liftEff to wrap the concrete implementation.
+    /// </summary>
+    static K<Eff<AppRuntime>, TimeIO> Has<Eff<AppRuntime>, TimeIO>.Ask =>
+        liftEff((Func<AppRuntime, TimeIO>)(rt => new LiveTimeIO()));
 }
