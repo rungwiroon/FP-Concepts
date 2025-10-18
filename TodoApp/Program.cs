@@ -40,33 +40,81 @@ app.UseCors("AllowFrontend");
 
 // GET /todos - List all todos
 app.MapGet("/todos", (
-    AppDbContext ctx,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoServiceSimple<Eff<AppRuntime>, AppRuntime>.List()
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.List()
         .Run(runtime);
 
     return ToResult(result, todos => Results.Ok(todos.Select(MapToResponse)));
 });
 
-// TODO: Other endpoints commented out - only List() is implemented in TodoServiceSimple
-/*
 // GET /todos/{id} - Get todo by id
-app.MapGet("/todos/{id}", async (
+app.MapGet("/todos/{id}", (
     int id,
-    AppDbContext ctx,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = await TodoServiceSimple<Eff<AppRuntime>, AppRuntime>.Get(id)
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Get(id)
         .Run(runtime);
 
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
-*/
+
+// POST /todos - Create a new todo
+app.MapPost("/todos", (
+    CreateTodoRequest request,
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    var runtime = new AppRuntime(services);
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Create(request.Title, request.Description)
+        .Run(runtime);
+
+    return ToResult(result, todo => Results.Created($"/todos/{todo.Id}", MapToResponse(todo)));
+});
+
+// PUT /todos/{id} - Update a todo
+app.MapPut("/todos/{id}", (
+    int id,
+    UpdateTodoRequest request,
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    var runtime = new AppRuntime(services);
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Update(id, request.Title, request.Description)
+        .Run(runtime);
+
+    return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
+});
+
+// PUT /todos/{id}/toggle - Toggle completion status
+app.MapPut("/todos/{id}/toggle", (
+    int id,
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    var runtime = new AppRuntime(services);
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.ToggleComplete(id)
+        .Run(runtime);
+
+    return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
+});
+
+// DELETE /todos/{id} - Delete a todo
+app.MapDelete("/todos/{id}", (
+    int id,
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    var runtime = new AppRuntime(services);
+    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Delete(id)
+        .Run(runtime);
+
+    return ToResult(result, _ => Results.NoContent());
+});
 
 app.Run();
 
