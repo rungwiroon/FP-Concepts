@@ -53,7 +53,7 @@ public static class TodoService<M, RT>
     /// </summary>
     public static K<M, Todo> Create(string title, string? description) =>
         from _ in Logger<M, RT>.logInfo($"Creating todo: {title}")
-        from now in Time<M, RT>.getUtcNow
+        from now in Time<M, RT>.UtcNow
         from newTodo in M.Pure(new Todo
         {
             Title = title,
@@ -102,7 +102,7 @@ public static class TodoService<M, RT>
     public static K<M, Todo> ToggleComplete(int id) =>
         from _ in Logger<M, RT>.logInfo($"Toggling completion for todo {id}")
         from existing in Get(id)
-        from now in Time<M, RT>.getUtcNow
+        from now in Time<M, RT>.UtcNow
         from updated in Database<M, RT>.liftIO((ctx, ct) =>
         {
             // Create toggled entity

@@ -9,14 +9,13 @@ namespace TodoApp.Infrastructure.Capabilities;
 /// Provides pure functional access to time operations
 /// </summary>
 public static class Time<M, RT>
-    where M : Monad<M>, MonadIO<M>
+    where M : Monad<M>
     where RT : Has<M, TimeIO>
 {
     /// <summary>
     /// Get current UTC time from the runtime
     /// </summary>
-    public static K<M, DateTime> getUtcNow =>
+    public static K<M, DateTime> UtcNow =>
         from timeIO in Has<M, RT, TimeIO>.ask
-        from now in M.Pure(timeIO.GetUtcNow())
-        select now;
+        select timeIO.GetUtcNow();
 }

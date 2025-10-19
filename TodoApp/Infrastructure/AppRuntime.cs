@@ -39,10 +39,7 @@ public record AppRuntime(IServiceProvider Services) :
         {
             var context = rt.Services.GetService(typeof(AppDbContext)) as AppDbContext
                 ?? throw new InvalidOperationException("AppDbContext not registered in DI container");
-            var ct = rt.Services.GetService(typeof(CancellationToken)) is CancellationToken token
-                ? token
-                : CancellationToken.None;
-            return new LiveDatabaseIO(context, ct);
+            return new LiveDatabaseIO(context);
         }));
 
     /// <summary>
