@@ -112,21 +112,8 @@ public record AppRuntime(IServiceProvider Services) :
     Has<Eff<AppRuntime>, LoggerIO>,
     Has<Eff<AppRuntime>, DatabaseIO>
 {
-    // Helper to lift functions into Eff
-    private static Eff<AppRuntime, A> liftEff<A>(Func<AppRuntime, A> f) =>
-        Eff<AppRuntime, A>.Lift(rt =>
-        {
-            try
-            {
-                return Fin<A>.Succ(f(rt));
-            }
-            catch (Exception ex)
-            {
-                return Fin<A>.Fail(Error.New(ex));
-            }
-        });
-
     // Implement the Has trait (TWO params, uppercase .Ask)
+    // Uses language-ext's built-in liftEff function from Prelude
     static K<Eff<AppRuntime>, DatabaseIO> Has<Eff<AppRuntime>, DatabaseIO>.Ask =>
         liftEff((Func<AppRuntime, DatabaseIO>)(rt => new LiveDatabaseIO(rt.Services)));
 
@@ -135,6 +122,19 @@ public record AppRuntime(IServiceProvider Services) :
             rt.Services.GetRequiredService<ILogger<AppRuntime>>())));
 }
 ```
+
+**Note about liftEff:**
+The `liftEff` function is provided by language-ext's Prelude. Import it with:
+```csharp
+using static LanguageExt.Prelude;
+```
+
+The signature is:
+```csharp
+public static Eff<RT, A> liftEff<RT, A>(Func<RT, A> f)
+```
+
+It lifts a simple function `Func<RT, A>` into an `Eff<RT, A>` effect, automatically handling exceptions and wrapping the result in `Fin<A>`.
 
 #### 4. Write Business Logic Using the Pattern
 
@@ -290,13 +290,7 @@ public record AppRuntime(IServiceProvider Services) :
     Has<Eff<AppRuntime>, TimeIO>,
     Has<Eff<AppRuntime>, CancellationTokenIO>
 {
-    private static Eff<AppRuntime, A> liftEff<A>(Func<AppRuntime, A> f) =>
-        Eff<AppRuntime, A>.Lift(rt =>
-        {
-            try { return Fin<A>.Succ(f(rt)); }
-            catch (Exception ex) { return Fin<A>.Fail(Error.New(ex)); }
-        });
-
+    // Uses language-ext's built-in liftEff function (from Prelude)
     static K<Eff<AppRuntime>, LoggerIO> Has<Eff<AppRuntime>, LoggerIO>.Ask =>
         liftEff((Func<AppRuntime, LoggerIO>)(rt =>
             new LiveLoggerIO(rt.Services.GetRequiredService<ILogger<AppRuntime>>())));
@@ -1271,13 +1265,7 @@ public record TestRuntime :
     public TestLoggerIO Logger { get; } = new();
     public TestTimeIO Time { get; } = new();
 
-    private static Eff<TestRuntime, A> liftEff<A>(Func<TestRuntime, A> f) =>
-        Eff<TestRuntime, A>.Lift(rt =>
-        {
-            try { return Fin<A>.Succ(f(rt)); }
-            catch (Exception ex) { return Fin<A>.Fail(Error.New(ex)); }
-        });
-
+    // Uses language-ext's built-in liftEff function (from Prelude)
     static K<Eff<TestRuntime>, DatabaseIO> Has<Eff<TestRuntime>, DatabaseIO>.Ask =>
         liftEff((Func<TestRuntime, DatabaseIO>)(rt => rt.Database));
 
