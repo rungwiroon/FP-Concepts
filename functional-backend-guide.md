@@ -34,13 +34,13 @@ This guide documents a proven functional architecture for ASP.NET Core applicati
 
 ### Key Benefits
 
-✅ **Single abstraction** for all effects
-✅ **Composable** - stack capabilities like LEGO blocks
-✅ **Type-safe** - compiler ensures correctness
-✅ **Testable** - easy to mock dependencies
-✅ **Declarative** - clear intent, less boilerplate
-✅ **Error handling** - automatic short-circuiting
-✅ **Cancellation** - propagates through all operations
+✅ **Single abstraction** for all effects <br/>
+✅ **Composable** - stack capabilities like LEGO blocks <br/>
+✅ **Type-safe** - compiler ensures correctness <br/>
+✅ **Testable** - easy to mock dependencies <br/>
+✅ **Declarative** - clear intent, less boilerplate <br/>
+✅ **Error handling** - automatic short-circuiting <br/>
+✅ **Cancellation** - propagates through all operations <br/>
 
 ### Technology Stack
 
@@ -1418,13 +1418,13 @@ curl -X DELETE http://localhost:5000/todos/1
 
 The application demonstrates:
 
-✅ **Full CRUD operations** working with EF Core
-✅ **Logging** on every operation
-✅ **Validation** with error accumulation
-✅ **Time tracking** for created/completed dates
-✅ **Error handling** with meaningful messages
-✅ **Type safety** enforced by compiler
-✅ **Zero runtime overhead**
+✅ **Full CRUD operations** working with EF Core <br/>
+✅ **Logging** on every operation <br/>
+✅ **Validation** with error accumulation <br/>
+✅ **Time tracking** for created/completed dates <br/>
+✅ **Error handling** with meaningful messages <br/>
+✅ **Type safety** enforced by compiler <br/>
+✅ **Zero runtime overhead** <br/>
 
 ---
 
