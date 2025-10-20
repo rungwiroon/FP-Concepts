@@ -15,7 +15,6 @@ namespace TodoApp.Infrastructure;
 public record AppRuntime(IServiceProvider Services) :
     Has<Eff<AppRuntime>, LoggerIO>,
     Has<Eff<AppRuntime>, DatabaseIO>,
-    Has<Eff<AppRuntime>, CancellationTokenIO>,
     Has<Eff<AppRuntime>, TimeIO>
 {
     /// <summary>
@@ -40,19 +39,6 @@ public record AppRuntime(IServiceProvider Services) :
             var context = rt.Services.GetService(typeof(AppDbContext)) as AppDbContext
                 ?? throw new InvalidOperationException("AppDbContext not registered in DI container");
             return new LiveDatabaseIO(context);
-        }));
-
-    /// <summary>
-    /// Implements Has<Eff<AppRuntime>, CancellationTokenIO> by lifting the live implementation into an effect.
-    /// Uses liftEff to wrap the concrete implementation.
-    /// </summary>
-    static K<Eff<AppRuntime>, CancellationTokenIO> Has<Eff<AppRuntime>, CancellationTokenIO>.Ask =>
-        liftEff((Func<AppRuntime, CancellationTokenIO>)(rt =>
-        {
-            var ct = rt.Services.GetService(typeof(CancellationToken)) is CancellationToken token
-                ? token
-                : CancellationToken.None;
-            return new LiveCancellationTokenIO(ct);
         }));
 
     /// <summary>

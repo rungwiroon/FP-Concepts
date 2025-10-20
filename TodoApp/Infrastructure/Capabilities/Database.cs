@@ -9,7 +9,6 @@ namespace TodoApp.Infrastructure.Capabilities;
 /// Database utility module with dual type parameters.
 /// Follows the pattern: Database<M, RT> where M : Monad<M> and RT : Has<M, DatabaseIO>
 /// This allows the database operations to work with any monad M, not just Eff.
-/// CORRECTED: Using Has<M, RT, DatabaseIO>.ask (three params, lowercase)
 /// </summary>
 public static class Database<M, RT>
     where M : Monad<M>, MonadIO<M>
