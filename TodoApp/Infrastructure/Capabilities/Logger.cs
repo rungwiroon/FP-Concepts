@@ -18,34 +18,19 @@ public static class Logger<M, RT>
     /// </summary>
     public static K<M, Unit> logInfo(string message) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            logger.LogInfo(message);
-            return Unit.Default;
-        })
-        select result;
+        select logger.LogInfo(message);
 
     /// <summary>
     /// Log a warning message.
     /// </summary>
     public static K<M, Unit> logWarning(string message) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            logger.LogWarning(message);
-            return Unit.Default;
-        })
-        select result;
+        select logger.LogWarning(message);
 
     /// <summary>
     /// Log an error message with optional exception.
     /// </summary>
     public static K<M, Unit> logError(string message, Exception? ex = null) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            logger.LogError(message, ex);
-            return Unit.Default;
-        })
-        select result;
+        select logger.LogError(message, ex);
 }

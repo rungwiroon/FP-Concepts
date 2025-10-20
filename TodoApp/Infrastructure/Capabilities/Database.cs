@@ -20,23 +20,15 @@ public static class Database<M, RT>
     /// </summary>
     public static K<M, AppDbContext> getContext() =>
         from db in Has<M, RT, DatabaseIO>.ask
-        from ctx in M.LiftIO(IO.liftAsync(() => db.GetContextAsync()))
+        from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
         select ctx;
-
-    /// <summary>
-    /// Get the cancellation token from the runtime.
-    /// </summary>
-    public static K<M, CancellationToken> getCancellationToken() =>
-        from db in Has<M, RT, DatabaseIO>.ask
-        from ct in M.LiftIO(IO.liftAsync(() => db.GetCancellationTokenAsync()))
-        select ct;
 
     /// <summary>
     /// Save changes to the database.
     /// </summary>
     public static K<M, Unit> saveChanges() =>
         from db in Has<M, RT, DatabaseIO>.ask
-        from _ in M.LiftIO(IO.liftAsync(async () => { await db.SaveChangesAsync(); return Unit.Default; }))
+        from _ in M.LiftIO(IO.liftAsync((env) => db.SaveChangesAsync(env.Token)))
         select Unit.Default;
 
     /// <summary>
@@ -45,7 +37,6 @@ public static class Database<M, RT>
     /// </summary>
     public static K<M, A> liftIO<A>(Func<AppDbContext, CancellationToken, Task<A>> operation) =>
         from ctx in getContext()
-        from ct in getCancellationToken()
-        from result in M.LiftIO(IO.liftAsync(() => operation(ctx, ct)))
+        from result in M.LiftIO(IO.liftAsync((env) => operation(ctx, env.Token)))
         select result;
 }

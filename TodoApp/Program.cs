@@ -51,67 +51,67 @@ app.MapGet("/todos", (
 });
 
 // GET /todos/{id} - Get todo by id
-app.MapGet("/todos/{id}", (
+app.MapGet("/todos/{id}", async (
     int id,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Get(id)
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.Get(id)
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
 // POST /todos - Create a new todo
-app.MapPost("/todos", (
+app.MapPost("/todos", async (
     CreateTodoRequest request,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Create(request.Title, request.Description)
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.Create(request.Title, request.Description)
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, todo => Results.Created($"/todos/{todo.Id}", MapToResponse(todo)));
 });
 
 // PUT /todos/{id} - Update a todo
-app.MapPut("/todos/{id}", (
+app.MapPut("/todos/{id}", async (
     int id,
     UpdateTodoRequest request,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Update(id, request.Title, request.Description)
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.Update(id, request.Title, request.Description)
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
 // PUT /todos/{id}/toggle - Toggle completion status
-app.MapPut("/todos/{id}/toggle", (
+app.MapPut("/todos/{id}/toggle", async (
     int id,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.ToggleComplete(id)
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.ToggleComplete(id)
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
 // DELETE /todos/{id} - Delete a todo
-app.MapDelete("/todos/{id}", (
+app.MapDelete("/todos/{id}", async (
     int id,
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Delete(id)
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.Delete(id)
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, _ => Results.NoContent());
 });

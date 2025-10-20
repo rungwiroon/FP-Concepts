@@ -1,3 +1,4 @@
+using LanguageExt;
 using TodoApp.Data;
 
 namespace TodoApp.Infrastructure.Traits;
@@ -8,7 +9,6 @@ namespace TodoApp.Infrastructure.Traits;
 /// </summary>
 public interface DatabaseIO
 {
-    Task<AppDbContext> GetContextAsync();
-    Task<CancellationToken> GetCancellationTokenAsync();
-    Task SaveChangesAsync();
+    AppDbContext GetContext();
+    Task<Unit> SaveChangesAsync(CancellationToken cancellationToken);
 }
