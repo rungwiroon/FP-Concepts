@@ -81,7 +81,7 @@ This is similar to how Haskell's type class dictionaries work - the RT parameter
 ```csharp
 public interface DatabaseIO
 {
-    Task<AppDbContext> GetContextAsync();
+    AppDbContext GetContext();
 }
 ```
 
@@ -97,7 +97,7 @@ public class LiveDatabaseIO : DatabaseIO
         _services = services;
     }
 
-    public Task<AppDbContext> GetContextAsync()
+    public AppDbContext GetContext()
     {
         var context = _services.GetRequiredService<AppDbContext>();
         return Task.FromResult(context);
@@ -146,7 +146,7 @@ public static class Database<M, RT>
     // Use THREE params with lowercase .ask
     public static K<M, AppDbContext> getContext() =>
         from db in Has<M, RT, DatabaseIO>.ask  // ← THE KEY
-        from ctx in M.LiftIO(IO.liftAsync(() => db.GetContextAsync()))
+        from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
         select ctx;
 
     public static K<M, A> liftIO<A>(Func<AppDbContext, CancellationToken, Task<A>> f) =>
@@ -318,7 +318,7 @@ public record AppRuntime(IServiceProvider Services) :
 ```csharp
 public interface DatabaseIO
 {
-    Task<AppDbContext> GetContextAsync();
+    AppDbContext GetContext();
 }
 ```
 
@@ -333,7 +333,7 @@ public class LiveDatabaseIO : DatabaseIO
         _services = services;
     }
 
-    public Task<AppDbContext> GetContextAsync()
+    public AppDbContext GetContext()
     {
         var context = _services.GetRequiredService<AppDbContext>();
         return Task.FromResult(context);
@@ -349,7 +349,7 @@ public static class Database<M, RT>
 {
     public static K<M, AppDbContext> getContext() =>
         from db in Has<M, RT, DatabaseIO>.ask
-        from ctx in M.LiftIO(IO.liftAsync(() => db.GetContextAsync()))
+        from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
         select ctx;
 
     // Helper for database operations
@@ -832,7 +832,7 @@ record DbEnv(AppDbContext DbContext, CancellationToken CancellationToken, ILogge
 // After: Separate trait interfaces
 public interface DatabaseIO
 {
-    Task<AppDbContext> GetContextAsync();
+    AppDbContext GetContext();
 }
 
 public interface LoggerIO
@@ -857,7 +857,7 @@ public class LiveDatabaseIO : DatabaseIO
     private readonly IServiceProvider _services;
     public LiveDatabaseIO(IServiceProvider services) => _services = services;
 
-    public Task<AppDbContext> GetContextAsync() =>
+    public AppDbContext GetContext() =>
         Task.FromResult(_services.GetRequiredService<AppDbContext>());
 }
 
@@ -914,7 +914,7 @@ public static class Database<M, RT>
 {
     public static K<M, AppDbContext> getContext() =>
         from db in Has<M, RT, DatabaseIO>.ask
-        from ctx in M.LiftIO(IO.liftAsync(() => db.GetContextAsync()))
+        from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
         select ctx;
 }
 ```
@@ -1232,7 +1232,7 @@ public class TestDatabaseIO : DatabaseIO
         _context = new AppDbContext(options);
     }
 
-    public Task<AppDbContext> GetContextAsync() => Task.FromResult(_context);
+    public AppDbContext GetContext() => _context;
 }
 
 public class TestLoggerIO : LoggerIO
@@ -1837,7 +1837,7 @@ System.ObjectDisposedException: Cannot access a disposed object. A common cause 
 **Cause:** DbContext resolved once and reused across multiple operations.
 
 **Solution:**
-Ensure `GetContextAsync` returns a fresh context from DI:
+Ensure `GetContext` returns a fresh context from DI:
 ```csharp
 public class LiveDatabaseIO : DatabaseIO
 {
@@ -1848,11 +1848,10 @@ public class LiveDatabaseIO : DatabaseIO
         _services = services;
     }
 
-    public Task<AppDbContext> GetContextAsync()
+    public AppDbContext GetContext()
     {
         // Get fresh context from DI each time
-        var context = _services.GetRequiredService<AppDbContext>();
-        return Task.FromResult(context);
+        return _services.GetRequiredService<AppDbContext>();
     }
 }
 ```
