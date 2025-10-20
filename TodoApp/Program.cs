@@ -39,13 +39,13 @@ app.UseCors("AllowFrontend");
 // Map endpoints using CORRECTED Has<M, RT, T>.ask pattern
 
 // GET /todos - List all todos
-app.MapGet("/todos", (
+app.MapGet("/todos", async (
     IServiceProvider services,
     CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.List()
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.List()
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return ToResult(result, todos => Results.Ok(todos.Select(MapToResponse)));
 });

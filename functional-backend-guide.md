@@ -148,12 +148,6 @@ public static class Database<M, RT>
         from db in Has<M, RT, DatabaseIO>.ask  // ← THE KEY
         from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
         select ctx;
-
-    public static K<M, A> liftIO<A>(Func<AppDbContext, CancellationToken, Task<A>> f) =>
-        from ctx in getContext()
-        from ct in CancellationTokenCapability<M, RT>.getCancellationToken()
-        from result in M.LiftIO(IO.liftAsync(() => f(ctx, ct)))
-        select result;
 }
 ```
 
@@ -176,12 +170,12 @@ public static class TodoService<M, RT>
 #### 6. Execute from API Endpoint
 
 ```csharp
-app.MapGet("/todos", (IServiceProvider services) =>
+app.MapGet("/todos", async (IServiceProvider services, CancellationToken ct) =>
 {
     var runtime = new AppRuntime(services);
 
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.List()
-        .Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.List()
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     return result.Match(
         Succ: todos => Results.Ok(todos),
@@ -962,7 +956,7 @@ app.MapGet("/todos", async (AppDbContext ctx, ILogger<Program> logger, Cancellat
 app.MapGet("/todos", (IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.List().Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.List().RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todos => Results.Ok(todos));
 });
 ```
@@ -1288,9 +1282,9 @@ public async Task Create_ShouldAddTodo_AndLogCorrectly()
     runtime.Time.FixedTime = new DateTime(2024, 6, 15);
 
     // Act
-    var result = TodoService<Eff<TestRuntime>, TestRuntime>
+    var result = await TodoService<Eff<TestRuntime>, TestRuntime>
         .Create("Test Todo", "Test Description")
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     // Assert
     Assert.True(result.IsSucc);
@@ -1312,9 +1306,9 @@ public async Task Get_ShouldFail_WhenTodoNotFound()
     var runtime = new TestRuntime();
 
     // Act
-    var result = TodoService<Eff<TestRuntime>, TestRuntime>
+    var result = await TodoService<Eff<TestRuntime>, TestRuntime>
         .Get(999)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     // Assert
     Assert.True(result.IsFail);
@@ -1332,7 +1326,7 @@ public async Task Update_ShouldModifyTodo_AndPreserveCreatedDate()
 
     var createResult = TodoService<Eff<TestRuntime>, TestRuntime>
         .Create("Original", "Original Description")
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     var createdTodo = createResult.Match(
         Succ: t => t,
@@ -1342,7 +1336,7 @@ public async Task Update_ShouldModifyTodo_AndPreserveCreatedDate()
     runtime.Time.FixedTime = new DateTime(2024, 6, 1);
     var updateResult = TodoService<Eff<TestRuntime>, TestRuntime>
         .Update(createdTodo.Id, "Updated", "Updated Description")
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     // Assert
     Assert.True(updateResult.IsSucc);
@@ -1376,7 +1370,7 @@ public async Task FullCrudWorkflow_ShouldSucceed()
     // Act & Assert - Create
     var createResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .Create("Integration Test", "Testing full workflow")
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(createResult.IsSucc);
     var created = createResult.ThrowIfFail();
@@ -1384,21 +1378,21 @@ public async Task FullCrudWorkflow_ShouldSucceed()
     // Act & Assert - Get
     var getResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .Get(created.Id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(getResult.IsSucc);
 
     // Act & Assert - Update
     var updateResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .Update(created.Id, "Updated Title", "Updated Description")
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(updateResult.IsSucc);
 
     // Act & Assert - Toggle
     var toggleResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .ToggleComplete(created.Id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(toggleResult.IsSucc);
     Assert.True(toggleResult.ThrowIfFail().IsCompleted);
@@ -1406,14 +1400,14 @@ public async Task FullCrudWorkflow_ShouldSucceed()
     // Act & Assert - Delete
     var deleteResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .Delete(created.Id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(deleteResult.IsSucc);
 
     // Verify deleted
     var getDeletedResult = TodoService<Eff<AppRuntime>, AppRuntime>
         .Get(created.Id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
 
     Assert.True(getDeletedResult.IsFail);
 }
@@ -1560,7 +1554,7 @@ static IResult ToResult<A>(Fin<A> result, Func<A, IResult> onSuccess) =>
 app.MapGet("/todos", (IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.List().Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.List().RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todos => Results.Ok(todos.Select(MapToResponse)));
 });
 
@@ -1568,7 +1562,7 @@ app.MapGet("/todos", (IServiceProvider services) =>
 app.MapGet("/todos/{id}", (int id, IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>.Get(id).Run(runtime);
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.Get(id).RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
@@ -1576,9 +1570,9 @@ app.MapGet("/todos/{id}", (int id, IServiceProvider services) =>
 app.MapPost("/todos", (CreateTodoRequest request, IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>
         .Create(request.Title, request.Description)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todo => Results.Created($"/todos/{todo.Id}", MapToResponse(todo)));
 });
 
@@ -1586,9 +1580,9 @@ app.MapPost("/todos", (CreateTodoRequest request, IServiceProvider services) =>
 app.MapPut("/todos/{id}", (int id, UpdateTodoRequest request, IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>
         .Update(id, request.Title, request.Description)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
@@ -1596,9 +1590,9 @@ app.MapPut("/todos/{id}", (int id, UpdateTodoRequest request, IServiceProvider s
 app.MapPatch("/todos/{id}/toggle", (int id, IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>
         .ToggleComplete(id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, todo => Results.Ok(MapToResponse(todo)));
 });
 
@@ -1606,9 +1600,9 @@ app.MapPatch("/todos/{id}/toggle", (int id, IServiceProvider services) =>
 app.MapDelete("/todos/{id}", (int id, IServiceProvider services) =>
 {
     var runtime = new AppRuntime(services);
-    var result = TodoService<Eff<AppRuntime>, AppRuntime>
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>
         .Delete(id)
-        .Run(runtime);
+        .RunAsync(runtime, EnvIO.New(token: ct));
     return ToResult(result, _ => Results.NoContent());
 });
 
