@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using LanguageExt;
 
 namespace TodoApp.Infrastructure.Traits;
@@ -8,7 +9,7 @@ namespace TodoApp.Infrastructure.Traits;
 /// </summary>
 public interface LoggerIO
 {
-    Unit LogInfo(string message);
-    Unit LogWarning(string message);
-    Unit LogError(string message, Exception? ex = null);
+    Unit LogInfo([ConstantExpected] string message, params object[] args);
+    Unit LogWarning([ConstantExpected] string message, params object[] args);
+    Unit LogError(Exception? ex = null, [ConstantExpected] string? message = null, params object[] args);
 }

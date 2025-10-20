@@ -11,12 +11,11 @@
 4. [Capability Implementations](#capability-implementations)
 5. [Extension Methods](#extension-methods)
 6. [Domain Services](#domain-services)
-7. [Migration Journey](#migration-journey)
-8. [EnvIO Usage](#envio-usage)
-9. [Best Practices](#best-practices)
-10. [Testing Approach](#testing-approach)
-11. [Complete Working Example](#complete-working-example)
-12. [Troubleshooting](#troubleshooting)
+7. [EnvIO Usage](#envio-usage)
+8. [Best Practices](#best-practices)
+9. [Testing Approach](#testing-approach)
+10. [Complete Working Example](#complete-working-example)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -349,8 +348,7 @@ public static class Database<M, RT>
     // Helper for database operations
     public static K<M, A> liftIO<A>(Func<AppDbContext, CancellationToken, Task<A>> f) =>
         from ctx in getContext()
-        from ct in CancellationTokenCapability<M, RT>.getCancellationToken()
-        from result in M.LiftIO(IO.liftAsync(() => f(ctx, ct)))
+        from result in M.LiftIO(IO.liftAsync((env) => f(ctx, env.Token)))
         select result;
 }
 ```
@@ -421,7 +419,7 @@ public static class Logger<M, RT>
 ```csharp
 public interface TimeIO
 {
-    DateTime Now();
+    DateTime UtcNow();
 }
 ```
 
@@ -429,7 +427,7 @@ public interface TimeIO
 ```csharp
 public class LiveTimeIO : TimeIO
 {
-    public DateTime Now() => DateTime.UtcNow;
+    public DateTime UtcNow() => DateTime.UtcNow;
 }
 ```
 
@@ -441,48 +439,7 @@ public static class Time<M, RT>
 {
     public static K<M, DateTime> now() =>
         from time in Has<M, RT, TimeIO>.ask
-        select time.Now();
-}
-```
-
-### CancellationTokenIO - Cancellation
-
-**Trait Interface:**
-```csharp
-public interface CancellationTokenIO
-{
-    CancellationToken GetCancellationToken();
-}
-```
-
-**Live Implementation:**
-```csharp
-public class LiveCancellationTokenIO : CancellationTokenIO
-{
-    private readonly IServiceProvider _services;
-
-    public LiveCancellationTokenIO(IServiceProvider services)
-    {
-        _services = services;
-    }
-
-    public CancellationToken GetCancellationToken()
-    {
-        var httpContext = _services.GetService<IHttpContextAccessor>()?.HttpContext;
-        return httpContext?.RequestAborted ?? CancellationToken.None;
-    }
-}
-```
-
-**Capability Module:**
-```csharp
-public static class CancellationTokenCapability<M, RT>
-    where M : Monad<M>
-    where RT : Has<M, CancellationTokenIO>
-{
-    public static K<M, CancellationToken> getCancellationToken() =>
-        from ct in Has<M, RT, CancellationTokenIO>.ask
-        select ct.GetCancellationToken();
+        select time.UtcNow();
 }
 ```
 
@@ -776,205 +733,6 @@ public static class TodoValidation
     }
 }
 ```
-
----
-
-## Migration Journey
-
-### From Db<A> to Has<M, RT, T>.ask
-
-The TodoApp was originally built using a **Db<A> monad** pattern (ReaderT + IO + Error handling). This section documents the migration to the Has<M, RT, T>.ask pattern.
-
-### What Was the Db<A> Pattern?
-
-```csharp
-// Old pattern: Custom monad wrapping ReaderT<DbEnv, IO, A>
-record Db<A>(ReaderT<DbEnv, IO, A> RunDb) : K<Db, A>
-
-record DbEnv(
-    AppDbContext DbContext,
-    CancellationToken CancellationToken,
-    ILogger Logger
-);
-
-// Usage
-public static K<Db, List<Todo>> List() =>
-    from ctx in Db.Ctx<AppDbContext>()
-    from ct in Db.CancellationToken()
-    from todos in Db.LiftIO(ctx.Todos.ToListAsync(ct))
-    select todos;
-```
-
-### Why Migrate?
-
-1. **Capability-based design** - Better separation of concerns
-2. **Testability** - Easier to mock individual capabilities
-3. **Composability** - Add new capabilities without changing DbEnv
-4. **Type safety** - Compiler ensures required capabilities are available
-5. **Industry pattern** - Aligns with modern FP practices (Scala ZIO, Haskell's mtl)
-
-### Migration Steps
-
-#### Phase 1: Create Trait Interfaces
-
-Define what capabilities exist:
-
-```csharp
-// Before: Everything in DbEnv
-record DbEnv(AppDbContext DbContext, CancellationToken CancellationToken, ILogger Logger);
-
-// After: Separate trait interfaces
-public interface DatabaseIO
-{
-    AppDbContext GetContext();
-}
-
-public interface LoggerIO
-{
-    void LogInfo(string message);
-    void LogError(string message);
-}
-
-public interface CancellationTokenIO
-{
-    CancellationToken GetCancellationToken();
-}
-```
-
-#### Phase 2: Create Live Implementations
-
-Implement the traits:
-
-```csharp
-public class LiveDatabaseIO : DatabaseIO
-{
-    private readonly IServiceProvider _services;
-    public LiveDatabaseIO(IServiceProvider services) => _services = services;
-
-    public AppDbContext GetContext() =>
-        Task.FromResult(_services.GetRequiredService<AppDbContext>());
-}
-
-public class LiveLoggerIO : LoggerIO
-{
-    private readonly ILogger _logger;
-    public LiveLoggerIO(ILogger logger) => _logger = logger;
-
-    public void LogInfo(string message) => _logger.LogInformation(message);
-    public void LogError(string message) => _logger.LogError(message);
-}
-```
-
-#### Phase 3: Update Runtime
-
-Change from DbEnv to AppRuntime implementing Has traits:
-
-```csharp
-// Before
-record DbEnv(AppDbContext DbContext, CancellationToken CancellationToken, ILogger Logger);
-
-// After
-public record AppRuntime(IServiceProvider Services) :
-    Has<Eff<AppRuntime>, LoggerIO>,
-    Has<Eff<AppRuntime>, DatabaseIO>,
-    Has<Eff<AppRuntime>, CancellationTokenIO>
-{
-    static K<Eff<AppRuntime>, DatabaseIO> Has<Eff<AppRuntime>, DatabaseIO>.Ask =>
-        liftEff((Func<AppRuntime, DatabaseIO>)(rt => new LiveDatabaseIO(rt.Services)));
-
-    static K<Eff<AppRuntime>, LoggerIO> Has<Eff<AppRuntime>, LoggerIO>.Ask =>
-        liftEff((Func<AppRuntime, LoggerIO>)(rt =>
-            new LiveLoggerIO(rt.Services.GetRequiredService<ILogger<AppRuntime>>())));
-
-    static K<Eff<AppRuntime>, CancellationTokenIO> Has<Eff<AppRuntime>, CancellationTokenIO>.Ask =>
-        liftEff((Func<AppRuntime, CancellationTokenIO>)(rt =>
-            new LiveCancellationTokenIO(rt.Services)));
-}
-```
-
-#### Phase 4: Create Capability Modules
-
-Replace Db.* helpers with capability modules:
-
-```csharp
-// Before
-public static Db<AppDbContext> Ctx() => ...
-public static Db<CancellationToken> CancellationToken() => ...
-
-// After
-public static class Database<M, RT>
-    where M : Monad<M>, MonadIO<M>
-    where RT : Has<M, DatabaseIO>
-{
-    public static K<M, AppDbContext> getContext() =>
-        from db in Has<M, RT, DatabaseIO>.ask
-        from ctx in M.LiftIO(IO.lift(env => db.GetContext()))
-        select ctx;
-}
-```
-
-#### Phase 5: Update Domain Services
-
-Change from Db monad to generic K<M, A>:
-
-```csharp
-// Before: Specific to Db monad
-public static K<Db, List<Todo>> List() =>
-    from ctx in Db.Ctx<AppDbContext>()
-    from ct in Db.CancellationToken()
-    from todos in Db.LiftIO(ctx.Todos.ToListAsync(ct))
-    select todos;
-
-// After: Generic across any monad with required capabilities
-public static K<M, List<Todo>> List<M, RT>()
-    where M : Monad<M>, MonadIO<M>
-    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>
-{
-    return
-        from _ in Logger<M, RT>.logInfo("Listing all todos")
-        from todos in Database<M, RT>.liftIO((ctx, ct) =>
-            ctx.Todos.OrderByDescending(t => t.CreatedAt).ToListAsync(ct))
-        from __ in Logger<M, RT>.logInfo($"Found {todos.Count} todos")
-        select todos;
-}
-```
-
-#### Phase 6: Update API Endpoints
-
-Change from DbEnv to AppRuntime:
-
-```csharp
-// Before
-app.MapGet("/todos", async (AppDbContext ctx, ILogger<Program> logger, CancellationToken ct) =>
-{
-    var env = new DbEnv(ctx, ct, logger);
-    var result = await TodoRepository.List().Run(env).RunAsync();
-    return ToResult(result, todos => Results.Ok(todos));
-});
-
-// After
-app.MapGet("/todos", (IServiceProvider services) =>
-{
-    var runtime = new AppRuntime(services);
-    var result = await TodoService<Eff<AppRuntime>, AppRuntime>.List().RunAsync(runtime, EnvIO.New(token: ct));
-    return ToResult(result, todos => Results.Ok(todos));
-});
-```
-
-### Migration Results
-
-✅ **Build Status**: Succeeds with 0 errors, 0 warnings
-✅ **API Tests**: All endpoints working correctly
-✅ **Pattern Verified**: Has<M, RT, T>.ask proven in production
-✅ **Performance**: No runtime overhead
-
-### Lessons Learned
-
-1. **Three-parameter syntax is required** - `Has<M, RT, T>.ask` not `Has<M, T>.Ask`
-2. **Lowercase 'ask' for consumption** - Implementation uses uppercase `.Ask`
-3. **MonadIO<M> is required** - For lifting async operations
-4. **Use IO.liftAsync** - Wrap Task<T> before passing to M.LiftIO
-5. **Extension methods help** - `.To<M, A>()` makes conversions clean
 
 ---
 
@@ -1715,7 +1473,7 @@ public static K<M, A> DoSomething<M, RT>()
     where RT : Has<M, DatabaseIO>
 ```
 
-#### Error: Task<A> Not Compatible with IO
+#### Error: `Task<A>` Not Compatible with `IO`
 
 **Error message:**
 ```
@@ -1730,10 +1488,10 @@ CS1503: Argument 1: cannot convert from 'System.Threading.Tasks.Task<A>' to 'Lan
 from result in M.LiftIO(ctx.Todos.ToListAsync(ct))
 
 // ✅ Correct
-from result in M.LiftIO(IO.liftAsync(() => ctx.Todos.ToListAsync(ct)))
+from result in M.LiftIO(IO.liftAsync((env) => ctx.Todos.ToListAsync(env.Token)))
 ```
 
-#### Error: Cannot Convert Validation<Error, A> to K<M, A>
+#### Error: Cannot Convert `Validation<Error, A>` to `K<M, A>`
 
 **Error message:**
 ```
@@ -1751,14 +1509,14 @@ from validated in TodoValidation.Validate(title, description)
 from validated in TodoValidation.Validate(title, description).To<M, Todo>()
 ```
 
-#### Error: Option<A> Cannot Be Used in LINQ Query
+#### Error: `Option<A>` Cannot Be Used in LINQ Query
 
 **Error message:**
 ```
 CS1936: Could not find an implementation of the query pattern for source type 'Option<A>'.
 ```
 
-**Cause:** Not converting Option<A> to K<M, A>.
+**Cause:** Not converting `Option<A>` to `K<M, A>`.
 
 **Solution:**
 ```csharp
@@ -1886,17 +1644,17 @@ This guide documents a **production-ready** functional architecture for ASP.NET 
 
 - **language-ext GitHub**: https://github.com/louthy/language-ext
 - **language-ext v5 Documentation**: https://louthy.github.io/language-ext/
-- **TodoApp Example**: See d:\Sourcecode\Me\fp-concepts\TodoApp
+- **Higher Kinds in C# with language-ext**: https://paullouth.com/higher-kinds-in-c-with-language-ext/
 
 ### Success Metrics
 
 The TodoApp demonstrates:
 
-✅ **100% functional** - No mutable state
-✅ **100% composable** - All operations are effects
-✅ **100% testable** - Full test coverage possible
-✅ **100% type-safe** - Compiler enforces correctness
-✅ **0 runtime overhead** - Abstractions compile away
+✅ **100% functional** - No mutable state <br/>
+✅ **100% composable** - All operations are effects <br/>
+✅ **100% testable** - Full test coverage possible <br/>
+✅ **100% type-safe** - Compiler enforces correctness <br/>
+✅ **0 runtime overhead** - Abstractions compile away <br/>
 
 This architecture is **production-ready** and has been **verified to work** with:
 - ASP.NET Core 8.0
@@ -1906,6 +1664,5 @@ This architecture is **production-ready** and has been **verified to work** with
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: Based on TodoApp implementation as of latest commit
-**Status**: Production-Ready ✅
+**Document Version**: 1.0 <br/>
+**Last Updated**: Based on TodoApp implementation as of latest commit <br/>

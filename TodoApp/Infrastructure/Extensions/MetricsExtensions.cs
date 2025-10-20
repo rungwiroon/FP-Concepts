@@ -21,7 +21,10 @@ public static class MetricsExtensions
             from startTime in Time<M, RT>.UtcNow
             from result in operation
             from endTime in Time<M, RT>.UtcNow
-            from _ in LoggingExtensions.LogInfo<M, RT>($"Metrics - {operationName}: {(endTime - startTime).TotalMilliseconds}ms")
+            from _ in LoggingExtensions.LogInfo<M, RT>(
+                "Metrics - {OperationName}: {Duration}ms",
+                operationName,
+                (endTime - startTime).TotalMilliseconds)
             select result;
     }
 }

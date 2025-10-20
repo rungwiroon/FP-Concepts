@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using LanguageExt;
 using LanguageExt.Traits;
 using TodoApp.Infrastructure.Capabilities;
@@ -11,15 +12,16 @@ namespace TodoApp.Infrastructure.Extensions;
 /// </summary>
 public static class LoggingExtensions
 {
-    public static K<M, Unit> LogInfo<M, RT>(string message)
+    public static K<M, Unit> LogInfo<M, RT>([ConstantExpected]string message, params object[] args)
         where M : Monad<M>
         where RT : Has<M, LoggerIO> =>
-        Logger<M, RT>.logInfo(message);
+        Logger<M, RT>.logInfo(message, args);
 
-    public static K<M, Unit> LogError<M, RT>(string message)
+    public static K<M, Unit> LogError<M, RT>(
+        Exception? ex = null, [ConstantExpected] string? message = null, params object[] args)
         where M : Monad<M>
         where RT : Has<M, LoggerIO> =>
-        Logger<M, RT>.logError(message);
+        Logger<M, RT>.logError(ex, message, args);
 
     public static K<M, A> WithLogging<M, RT, A>(
         this K<M, A> operation,
@@ -29,9 +31,9 @@ public static class LoggingExtensions
         where RT : Has<M, LoggerIO>
     {
         return
-            from _ in LogInfo<M, RT>(startMessage)
+            from _ in LogInfo<M, RT>("{Message}", startMessage)
             from result in operation
-            from __ in LogInfo<M, RT>(successMessage(result))
+            from __ in LogInfo<M, RT>("{Message}", successMessage(result))
             select result;
     }
 }

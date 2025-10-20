@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using LanguageExt;
 using LanguageExt.Traits;
 using TodoApp.Infrastructure.Traits;
@@ -16,21 +17,21 @@ public static class Logger<M, RT>
     /// <summary>
     /// Log an informational message.
     /// </summary>
-    public static K<M, Unit> logInfo(string message) =>
+    public static K<M, Unit> logInfo([ConstantExpected] string message, params object[] args) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        select logger.LogInfo(message);
+        select logger.LogInfo(message, args);
 
     /// <summary>
     /// Log a warning message.
     /// </summary>
-    public static K<M, Unit> logWarning(string message) =>
+    public static K<M, Unit> logWarning([ConstantExpected] string message, params object[] args) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        select logger.LogWarning(message);
+        select logger.LogWarning(message, args);
 
     /// <summary>
     /// Log an error message with optional exception.
     /// </summary>
-    public static K<M, Unit> logError(string message, Exception? ex = null) =>
+    public static K<M, Unit> logError(Exception? ex = null, [ConstantExpected] string? message = null, params object[] args) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        select logger.LogError(message, ex);
+        select logger.LogError(ex, message, args);
 }

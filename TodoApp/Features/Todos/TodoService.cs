@@ -25,7 +25,7 @@ public static class TodoService<M, RT>
         from _ in Logger<M, RT>.logInfo("Listing all todos")
         from todos in Database<M, RT>.liftIO((ctx, ct) =>
             ctx.Todos.OrderByDescending(t => t.CreatedAt).ToListAsync(ct))
-        from __ in Logger<M, RT>.logInfo($"Found {todos.Count} todos")
+        from __ in Logger<M, RT>.logInfo("Found {TodosCount} todos", todos.Count)
         select todos;
 
     /// <summary>
@@ -35,13 +35,13 @@ public static class TodoService<M, RT>
     /// Uses AsNoTracking() to avoid EF Core tracking conflicts
     /// </summary>
     public static K<M, Todo> Get(int id) =>
-        from _ in Logger<M, RT>.logInfo($"Getting todo by ID: {id}")
+        from _ in Logger<M, RT>.logInfo("Getting todo by ID: {Id}", id)
         from todo in Database<M, RT>.liftIO((ctx, ct) =>
             ctx.Todos.AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Id == id, ct)
                 .Map(Optional))
             .Bind(opt => opt.To<M, Todo>(() => Error.New(404, $"Todo with id {id} not found")))
-        from __ in Logger<M, RT>.logInfo($"Found todo: {todo.Title}")
+        from __ in Logger<M, RT>.logInfo("Found todo: {TodoTitle}", todo.Title)
         select todo;
 
     /// <summary>
@@ -52,7 +52,7 @@ public static class TodoService<M, RT>
     /// - No exceptions needed!
     /// </summary>
     public static K<M, Todo> Create(string title, string? description) =>
-        from _ in Logger<M, RT>.logInfo($"Creating todo: {title}")
+        from _ in Logger<M, RT>.logInfo("Creating todo: {Title}", title)
         from now in Time<M, RT>.UtcNow
         from newTodo in M.Pure(new Todo
         {
@@ -67,7 +67,7 @@ public static class TodoService<M, RT>
             ctx.Todos.Add(validated);
             return ctx.SaveChangesAsync(ct).Map(_ => validated);
         })
-        from __ in Logger<M, RT>.logInfo($"Created todo with ID: {saved.Id}")
+        from __ in Logger<M, RT>.logInfo("Created todo with ID: {SavedId}", saved.Id)
         select saved;
 
     /// <summary>
@@ -79,7 +79,7 @@ public static class TodoService<M, RT>
     /// - No exceptions!
     /// </summary>
     public static K<M, Todo> Update(int id, string title, string? description) =>
-        from _ in Logger<M, RT>.logInfo($"Updating todo {id}")
+        from _ in Logger<M, RT>.logInfo("Updating todo {Id}", id)
         from existing in Get(id)
         from updatedTodo in M.Pure(existing with
         {
@@ -92,7 +92,7 @@ public static class TodoService<M, RT>
             ctx.Entry(validated).State = EntityState.Modified;
             return ctx.SaveChangesAsync(ct).Map(_ => validated);
         })
-        from __ in Logger<M, RT>.logInfo($"Updated todo {id}")
+        from __ in Logger<M, RT>.logInfo("Updated todo {Id}", id)
         select saved;
 
     /// <summary>
@@ -100,7 +100,7 @@ public static class TodoService<M, RT>
     /// Pattern: Get existing + inline entity update
     /// </summary>
     public static K<M, Todo> ToggleComplete(int id) =>
-        from _ in Logger<M, RT>.logInfo($"Toggling completion for todo {id}")
+        from _ in Logger<M, RT>.logInfo("Toggling completion for todo {Id}", id)
         from existing in Get(id)
         from now in Time<M, RT>.UtcNow
         from updated in Database<M, RT>.liftIO((ctx, ct) =>
@@ -116,7 +116,7 @@ public static class TodoService<M, RT>
             ctx.Entry(toggledTodo).State = EntityState.Modified;
             return ctx.SaveChangesAsync(ct).Map(_ => toggledTodo);
         })
-        from __ in Logger<M, RT>.logInfo($"Todo {id} marked as {(updated.IsCompleted ? "completed" : "incomplete")}")
+        from __ in Logger<M, RT>.logInfo("Todo {Id} marked as {Status}", id, updated.IsCompleted ? "completed" : "incomplete")
         select updated;
 
     /// <summary>
@@ -124,13 +124,13 @@ public static class TodoService<M, RT>
     /// Pattern: Get existing + inline removal
     /// </summary>
     public static K<M, Unit> Delete(int id) =>
-        from _ in Logger<M, RT>.logInfo($"Deleting todo {id}")
+        from _ in Logger<M, RT>.logInfo("Deleting todo {Id}", id)
         from existing in Get(id)
         from __ in Database<M, RT>.liftIO((ctx, ct) =>
         {
             ctx.Todos.Remove(existing);
             return ctx.SaveChangesAsync(ct).Map(_ => unit);
         })
-        from ___ in Logger<M, RT>.logInfo($"Deleted todo {id}")
+        from ___ in Logger<M, RT>.logInfo("Deleted todo {Id}", id)
         select unit;
 }
