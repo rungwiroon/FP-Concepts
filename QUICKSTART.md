@@ -4,10 +4,10 @@ Get the full-stack functional programming todo app running in 5 minutes!
 
 ## Prerequisites
 
-- [ ] .NET 8 SDK installed - [Download](https://dotnet.microsoft.com/download)
-- [ ] Node.js 18+ installed - [Download](https://nodejs.org/)
-- [ ] A terminal/command prompt
-- [ ] A web browser
+- .NET 8 SDK installed - [Download](https://dotnet.microsoft.com/download)
+- Node.js 18+ installed - [Download](https://nodejs.org/)
+- A terminal/command prompt
+- A web browser
 
 ## Step 1: Start the Backend (2 minutes)
 
@@ -241,7 +241,7 @@ todo-app-frontend/src/features/todos/validation.ts   # Applicative validation
 
 ### Read the Guides
 
-- [functional-guide.md](functional-guide.md) - Backend FP patterns
+- [functional-backend-guide.md](functional-guide.md) - Backend FP patterns
 - [functional-frontend-guide.md](functional-frontend-guide.md) - Frontend FP patterns
 - [FULLSTACK-SUMMARY.md](FULLSTACK-SUMMARY.md) - Complete overview
 
@@ -256,9 +256,9 @@ Try adding:
 
 You now have a fully functional full-stack application demonstrating:
 
-✅ **Backend**: language-ext with Db monad, LINQ query syntax, effect extensions
-✅ **Frontend**: fp-ts with App monad, pipe composition, RemoteData pattern
-✅ **Full Stack**: Type-safe, composable, testable, maintainable code!
+✅ **Backend**: language-ext with Db monad, LINQ query syntax, effect extensions <br/>
+✅ **Frontend**: fp-ts with App monad, pipe composition, RemoteData pattern <br/>
+✅ **Full Stack**: Type-safe, composable, testable, maintainable code! <br/>
 
 ## Need Help?
 

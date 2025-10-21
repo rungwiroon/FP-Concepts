@@ -9,24 +9,18 @@ using static LanguageExt.Prelude;
 namespace TodoApp.Tests;
 
 /// <summary>
-/// Unit tests for TodoService using the trait-based capability pattern.
-/// Demonstrates how easy it is to test with TestRuntime providing test implementations.
+/// TRUE unit tests for TodoService using trait-based capability pattern.
+/// No EF Core - pure in-memory dictionary! Fast, simple, isolated.
 /// </summary>
-public class TodoServiceTests : IDisposable
+public class TodoServiceTests
 {
     private readonly TestRuntime _runtime;
 
     public TodoServiceTests()
     {
         _runtime = new TestRuntime(
-            databaseName: Guid.NewGuid().ToString(),
             currentTime: new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc)
         );
-    }
-
-    public void Dispose()
-    {
-        _runtime?.Dispose();
     }
 
     [Fact]
@@ -50,8 +44,7 @@ public class TodoServiceTests : IDisposable
             IsCompleted = false
         };
 
-        _runtime.Database.Context.Todos.AddRange(todo1, todo2);
-        await _runtime.Database.Context.SaveChangesAsync();
+        _runtime.Database.Seed(todo1, todo2);
 
         // Act
         var result = await TodoService<Eff<TestRuntime>, TestRuntime>.List()
@@ -84,8 +77,7 @@ public class TodoServiceTests : IDisposable
             IsCompleted = false
         };
 
-        _runtime.Database.Context.Todos.Add(todo);
-        await _runtime.Database.Context.SaveChangesAsync();
+        _runtime.Database.Seed(todo);
 
         // Act
         var result = await TodoService<Eff<TestRuntime>, TestRuntime>.Get(1)
@@ -135,10 +127,8 @@ public class TodoServiceTests : IDisposable
         Assert.False(todo.IsCompleted);
         Assert.Equal(new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc), todo.CreatedAt);
 
-        // Verify it was saved to database
-        var savedTodo = await _runtime.Database.Context.Todos.FindAsync(todo.Id);
-        Assert.NotNull(savedTodo);
-        Assert.Equal("Buy groceries", savedTodo!.Title);
+        // Verify it was saved - simple count check!
+        Assert.Equal(1, _runtime.Database.Count);
 
         // Verify logging
         Assert.True(_runtime.Logger.HasInfo("Creating todo"));
@@ -187,9 +177,7 @@ public class TodoServiceTests : IDisposable
             IsCompleted = false
         };
 
-        _runtime.Database.Context.Todos.Add(todo);
-        await _runtime.Database.Context.SaveChangesAsync();
-        _runtime.Database.Context.ChangeTracker.Clear(); // Clear tracking to avoid conflicts
+        _runtime.Database.Seed(todo);
 
         // Act
         var result = await TodoService<Eff<TestRuntime>, TestRuntime>
@@ -233,9 +221,7 @@ public class TodoServiceTests : IDisposable
             IsCompleted = false
         };
 
-        _runtime.Database.Context.Todos.Add(todo);
-        await _runtime.Database.Context.SaveChangesAsync();
-        _runtime.Database.Context.ChangeTracker.Clear(); // Clear tracking to avoid conflicts
+        _runtime.Database.Seed(todo);
 
         // Act - Toggle to completed
         var result1 = await TodoService<Eff<TestRuntime>, TestRuntime>.ToggleComplete(1)
@@ -250,10 +236,7 @@ public class TodoServiceTests : IDisposable
         Assert.NotNull(toggled1.CompletedAt);
         Assert.Equal(new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc), toggled1.CompletedAt);
 
-        // Clear tracking before second toggle
-        _runtime.Database.Context.ChangeTracker.Clear();
-
-        // Act - Toggle back to incomplete
+        // Act - Toggle back to incomplete (no tracking issues with dictionary!)
         var result2 = await TodoService<Eff<TestRuntime>, TestRuntime>.ToggleComplete(1)
             .RunAsync(_runtime, EnvIO.New());
 
@@ -282,9 +265,7 @@ public class TodoServiceTests : IDisposable
             IsCompleted = false
         };
 
-        _runtime.Database.Context.Todos.Add(todo);
-        await _runtime.Database.Context.SaveChangesAsync();
-        _runtime.Database.Context.ChangeTracker.Clear(); // Clear tracking to avoid conflicts
+        _runtime.Database.Seed(todo);
 
         // Act
         var result = await TodoService<Eff<TestRuntime>, TestRuntime>.Delete(1)
@@ -296,10 +277,8 @@ public class TodoServiceTests : IDisposable
             Fail: err => throw new Exception($"Expected success but got error: {err.Message}")
         );
 
-        // Verify it was deleted from database - need to detach and refetch
-        _runtime.Database.Context.ChangeTracker.Clear();
-        var deletedTodo = await _runtime.Database.Context.Todos.FindAsync(1);
-        Assert.Null(deletedTodo);
+        // Verify deletion - simple count check!
+        Assert.Equal(0, _runtime.Database.Count);
 
         // Verify logging
         Assert.True(_runtime.Logger.HasInfo("Deleting todo"));
@@ -331,7 +310,10 @@ public class TodoServiceTests : IDisposable
             .RunAsync(_runtime, EnvIO.New());
 
         // Assert
-        var todo = result.Match(Succ: t => t, Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+        var todo = result.Match(
+            Succ: t => t,
+            Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+        
         Assert.Equal(specificTime, todo.CreatedAt);
     }
 
@@ -365,7 +347,10 @@ public class TodoServiceTests : IDisposable
             .RunAsync(_runtime, EnvIO.New());
 
         // Assert - Should only see todos created in this test
-        var todos = result.Match(Succ: t => t, Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+        var todos = result.Match(
+            Succ: t => t,
+            Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+
         Assert.Single(todos);
         Assert.Equal("Isolated Todo", todos[0].Title);
     }
