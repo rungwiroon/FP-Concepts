@@ -121,7 +121,10 @@ public class TodoServiceTests
             .RunAsync(_runtime, EnvIO.New());
 
         // Assert
-        var todo = result.Match(Succ: t => t, Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+        var todo = result.Match(
+            Succ: t => t,
+            Fail: err => throw new Exception($"Expected success but got error: {err.Message}"));
+
         Assert.Equal("Buy groceries", todo.Title);
         Assert.Equal("Milk, eggs, bread", todo.Description);
         Assert.False(todo.IsCompleted);

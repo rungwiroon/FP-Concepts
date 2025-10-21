@@ -4,16 +4,29 @@ using TodoApp.Domain;
 namespace TodoApp.Infrastructure.Traits;
 
 /// <summary>
+/// Sort order options for todo queries.
+/// </summary>
+public enum TodoSortOrder
+{
+    CreatedAtDescending,
+    CreatedAtAscending,
+    TitleAscending,
+    TitleDescending
+}
+
+/// <summary>
 /// Database capability trait with domain operations.
 /// No DbContext exposure - enables pure unit testing!
 /// Operations are high-level and domain-focused.
+/// Supports query composition for performance (e.g., sorting at database level).
 /// </summary>
 public interface DatabaseIO
 {
     /// <summary>
-    /// Get all todos from the database.
+    /// Get all todos from the database with optional sorting.
+    /// Sorting is performed at the database level for optimal performance.
     /// </summary>
-    Task<List<Todo>> GetAllTodosAsync(CancellationToken cancellationToken);
+    Task<List<Todo>> GetAllTodosAsync(TodoSortOrder sortOrder, CancellationToken cancellationToken);
 
     /// <summary>
     /// Get a single todo by ID.

@@ -13,11 +13,21 @@ namespace TodoApp.Infrastructure.Live;
 /// </summary>
 public class LiveDatabaseIO(AppDbContext context) : DatabaseIO
 {
-    public async Task<List<Todo>> GetAllTodosAsync(CancellationToken cancellationToken)
+    public async Task<List<Todo>> GetAllTodosAsync(TodoSortOrder sortOrder, CancellationToken cancellationToken)
     {
-        return await context.Todos
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+        var query = context.Todos.AsNoTracking();
+
+        // Apply sorting at database level (translates to SQL ORDER BY)
+        query = sortOrder switch
+        {
+            TodoSortOrder.CreatedAtDescending => query.OrderByDescending(t => t.CreatedAt),
+            TodoSortOrder.CreatedAtAscending => query.OrderBy(t => t.CreatedAt),
+            TodoSortOrder.TitleAscending => query.OrderBy(t => t.Title),
+            TodoSortOrder.TitleDescending => query.OrderByDescending(t => t.Title),
+            _ => query.OrderByDescending(t => t.CreatedAt)
+        };
+
+        return await query.ToListAsync(cancellationToken);
     }
 
     public async Task<Option<Todo>> GetTodoByIdAsync(int id, CancellationToken cancellationToken)
