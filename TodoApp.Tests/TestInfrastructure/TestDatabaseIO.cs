@@ -15,10 +15,21 @@ public class TestDatabaseIO : DatabaseIO
     private readonly Dictionary<int, Todo> _todos = new();
     private int _nextId = 1;
 
-    public Task<List<Todo>> GetAllTodosAsync(CancellationToken cancellationToken)
+    public Task<List<Todo>> GetAllTodosAsync(TodoSortOrder sortOrder, CancellationToken cancellationToken)
     {
-        var todos = _todos.Values.ToList();
-        return Task.FromResult(todos);
+        var todos = _todos.Values;
+
+        // Apply sorting in memory (acceptable for unit tests with small datasets)
+        var sorted = sortOrder switch
+        {
+            TodoSortOrder.CreatedAtDescending => todos.OrderByDescending(t => t.CreatedAt).ToList(),
+            TodoSortOrder.CreatedAtAscending => todos.OrderBy(t => t.CreatedAt).ToList(),
+            TodoSortOrder.TitleAscending => todos.OrderBy(t => t.Title).ToList(),
+            TodoSortOrder.TitleDescending => todos.OrderByDescending(t => t.Title).ToList(),
+            _ => todos.OrderByDescending(t => t.CreatedAt).ToList()
+        };
+
+        return Task.FromResult(sorted);
     }
 
     public Task<Option<Todo>> GetTodoByIdAsync(int id, CancellationToken cancellationToken)

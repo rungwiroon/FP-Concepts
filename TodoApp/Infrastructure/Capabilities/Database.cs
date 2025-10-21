@@ -15,11 +15,12 @@ public static class Database<M, RT>
     where RT : Has<M, DatabaseIO>
 {
     /// <summary>
-    /// Get all todos from the database.
+    /// Get all todos from the database with optional sorting.
+    /// Sorting is performed at the database level for optimal performance.
     /// </summary>
-    public static K<M, List<Todo>> getAllTodos() =>
+    public static K<M, List<Todo>> getAllTodos(TodoSortOrder sortOrder = TodoSortOrder.CreatedAtDescending) =>
         from db in Has<M, RT, DatabaseIO>.ask
-        from todos in M.LiftIO(IO.liftAsync(env => db.GetAllTodosAsync(env.Token)))
+        from todos in M.LiftIO(IO.liftAsync(env => db.GetAllTodosAsync(sortOrder, env.Token)))
         select todos;
 
     /// <summary>

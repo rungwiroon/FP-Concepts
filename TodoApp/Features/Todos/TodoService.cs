@@ -20,13 +20,13 @@ public static class TodoService<M, RT>
 {
     /// <summary>
     /// List all todos ordered by creation date (newest first).
+    /// Sorting is performed at the database level for optimal performance.
     /// </summary>
     public static K<M, List<Todo>> List() =>
         from _ in Logger<M, RT>.logInfo("Listing all todos")
-        from todos in Database<M, RT>.getAllTodos()
-        from sorted in M.Pure(todos.OrderByDescending(t => t.CreatedAt).ToList())
-        from __ in Logger<M, RT>.logInfo("Found {TodosCount} todos", sorted.Count)
-        select sorted;
+        from todos in Database<M, RT>.getAllTodos(TodoSortOrder.CreatedAtDescending)
+        from __ in Logger<M, RT>.logInfo("Found {TodosCount} todos", todos.Count)
+        select todos;
 
     /// <summary>
     /// Get a single todo by ID.
