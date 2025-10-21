@@ -45,11 +45,11 @@ Just like the backend with language-ext, we can compose multiple effects in a ty
 ### Install Dependencies
 
 ```bash
-npm install fp-ts io-ts
+npm install fp-ts
 # or
-yarn add fp-ts io-ts
+yarn add fp-ts
 
-# Optional but recommended
+# Optional but recommended for RemoteData pattern
 npm install @devexperts/remote-data-ts
 ```
 
@@ -60,19 +60,18 @@ src/
 ├── lib/
 │   ├── AppMonad.ts           # App monad implementation
 │   ├── AppEnv.ts             # Environment type
+│   ├── HttpClient.ts         # HTTP client implementation
 │   └── effects/
-│       ├── logging.ts
-│       ├── api.ts
-│       ├── cache.ts
-│       └── validation.ts
+│       └── logging.ts        # Logging effect
 ├── features/
-│   └── products/
-│       ├── api.ts            # Product API calls
-│       ├── validation.ts     # Product validation
+│   └── todos/
+│       ├── api.ts            # Todo API calls
+│       ├── types.ts          # Todo type definitions
+│       ├── validation.ts     # Todo validation
 │       ├── hooks.ts          # React hooks
 │       └── components/
-│           ├── ProductList.tsx
-│           └── ProductForm.tsx
+│           ├── TodoList.tsx
+│           └── TodoForm.tsx
 └── App.tsx
 ```
 
@@ -99,6 +98,7 @@ interface HttpClient {
   get: <A>(url: string) => TaskEither<Error, A>;
   post: <A, B>(url: string, body: A) => TaskEither<Error, B>;
   put: <A, B>(url: string, body: A) => TaskEither<Error, B>;
+  patch: <A>(url: string) => TaskEither<Error, A>;
   delete: (url: string) => TaskEither<Error, void>;
 }
 
@@ -111,7 +111,7 @@ interface Cache {
 export interface AppEnv {
   httpClient: HttpClient;
   logger: Logger;
-  cache?: Cache;  // Optional
+  baseUrl: string;
 }
 ```
 
@@ -139,7 +139,7 @@ export const fromTaskEither = <A>(te: TE.TaskEither<Error, A>): App<A> =>
 
 // Access the environment
 export const ask = (): App<AppEnv> =>
-  R.ask();
+  R.asks((env: AppEnv) => TE.of(env));
 
 // Lift an async operation
 export const fromAsync = <A>(f: () => Promise<A>): App<A> =>
@@ -149,28 +149,18 @@ export const fromAsync = <A>(f: () => Promise<A>): App<A> =>
   ));
 
 // Map over the result
-export const map = <A, B>(f: (a: A) => B) => 
+export const map = <A, B>(f: (a: A) => B) =>
   (fa: App<A>): App<B> =>
-    R.map(TE.map(f))(fa);
+    pipe(fa, R.map(TE.map(f)));
 
 // FlatMap for chaining
-export const chain = <A, B>(f: (a: A) => App<B>) => 
+export const chain = <A, B>(f: (a: A) => App<B>) =>
   (fa: App<A>): App<B> =>
-    pipe(
-      fa,
-      R.chain(te =>
-        pipe(
-          te,
-          TE.chain(a =>
-            pipe(
-              f(a),
-              env => env(ask()(env))
-            )
-          ),
-          R.of
-        )
-      )
-    );
+    (env: AppEnv) =>
+      pipe(
+        fa(env),
+        TE.chain(a => f(a)(env))
+      );
 
 // Run the App with an environment
 export const run = <A>(env: AppEnv) => 
@@ -194,12 +184,6 @@ export const httpClient = (): App<HttpClient> =>
     map(env => env.httpClient)
   );
 
-export const cache = (): App<Cache | undefined> =>
-  pipe(
-    ask(),
-    map(env => env.cache)
-  );
-
 // Logging operations
 export const logInfo = (message: string): App<void> =>
   pipe(
@@ -211,6 +195,12 @@ export const logError = (message: string, err?: unknown): App<void> =>
   pipe(
     logger(),
     chain(log => fromAsync(() => Promise.resolve(log.error(message, err))))
+  );
+
+export const logWarn = (message: string): App<void> =>
+  pipe(
+    logger(),
+    chain(log => fromAsync(() => Promise.resolve(log.warn(message))))
   );
 ```
 
@@ -242,12 +232,12 @@ export const withLogging = <A>(
     );
 
 // Usage
-const getProduct = (id: number) =>
+const getTodo = (id: number) =>
   pipe(
-    fetchProductFromApi(id),
+    fetchTodoFromApi(id),
     withLogging(
-      `Fetching product ${id}`,
-      product => `Successfully fetched: ${product.name}`
+      `Fetching todo ${id}`,
+      todo => `Successfully fetched: ${todo.title}`
     )
   );
 ```
@@ -298,10 +288,10 @@ export const withCache = <A>(
     );
 
 // Usage
-const getProduct = (id: number) =>
+const getTodo = (id: number) =>
   pipe(
-    fetchProductFromApi(id),
-    withCache(`product:${id}`, 5 * 60 * 1000) // 5 minutes
+    fetchTodoFromApi(id),
+    withCache(`todo:${id}`, 5 * 60 * 1000) // 5 minutes
   );
 ```
 
@@ -391,7 +381,7 @@ export const withLoadingState = <A>(
 ### Basic HTTP Client
 
 ```typescript
-// lib/httpClient.ts
+// lib/HttpClient.ts
 import * as TE from 'fp-ts/TaskEither';
 
 export const createHttpClient = (baseURL: string): HttpClient => ({
@@ -439,6 +429,20 @@ export const createHttpClient = (baseURL: string): HttpClient => ({
       (reason) => reason instanceof Error ? reason : new Error(String(reason))
     ),
 
+  patch: <A>(url: string) =>
+    TE.tryCatch(
+      async () => {
+        const response = await fetch(`${baseURL}${url}`, {
+          method: 'PATCH',
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json() as Promise<A>;
+      },
+      (reason) => reason instanceof Error ? reason : new Error(String(reason))
+    ),
+
   delete: (url: string) =>
     TE.tryCatch(
       async () => {
@@ -454,113 +458,124 @@ export const createHttpClient = (baseURL: string): HttpClient => ({
 });
 ```
 
-### Product API Example
+### Todo API Example
 
 ```typescript
-// features/products/api.ts
+// features/todos/types.ts
+export interface Todo {
+  id: number;
+  title: string;
+  description: string | null;
+  isCompleted: boolean;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface CreateTodoRequest {
+  title: string;
+  description: string | null;
+}
+
+export interface UpdateTodoRequest {
+  title: string;
+  description: string | null;
+}
+```
+
+```typescript
+// features/todos/api.ts
 import * as App from '../../lib/AppMonad';
 import { pipe } from 'fp-ts/function';
 import { withLogging } from '../../lib/effects/logging';
-import { withCache } from '../../lib/effects/cache';
-import { withRetry } from '../../lib/effects/retry';
+import type { Todo, CreateTodoRequest, UpdateTodoRequest } from './types';
 
-export interface Product {
-  id: number;
-  name: string;
-  price: number;
-}
+// Re-export types
+export type { Todo, CreateTodoRequest, UpdateTodoRequest } from './types';
 
-export interface CreateProductRequest {
-  name: string;
-  price: number;
-}
-
-// Get all products
-export const listProducts = (): App.App<Product[]> =>
+// Get all todos
+export const listTodos = (): App.App<Todo[]> =>
   pipe(
     App.httpClient(),
-    App.chain(client => App.fromTaskEither(client.get<Product[]>('/products'))),
-    withCache('products:all', 60000), // 1 minute cache
+    App.chain(client => App.fromTaskEither(client.get<Todo[]>('/todos'))),
     withLogging(
-      'Fetching all products',
-      products => `Fetched ${products.length} products`
+      'Fetching all todos',
+      todos => `Fetched ${todos.length} todos`
     )
   );
 
-// Get single product
-export const getProduct = (id: number): App.App<Product> =>
-  pipe(
-    App.httpClient(),
-    App.chain(client => 
-      App.fromTaskEither(client.get<Product>(`/products/${id}`))
-    ),
-    withCache(`product:${id}`, 300000), // 5 minute cache
-    withRetry(3, 1000), // Retry 3 times with 1s delay
-    withLogging(
-      `Fetching product ${id}`,
-      product => `Fetched product: ${product.name}`
-    )
-  );
-
-// Create product
-export const createProduct = (
-  request: CreateProductRequest
-): App.App<Product> =>
+// Get single todo
+export const getTodo = (id: number): App.App<Todo> =>
   pipe(
     App.httpClient(),
     App.chain(client =>
-      App.fromTaskEither(client.post<CreateProductRequest, Product>(
-        '/products',
+      App.fromTaskEither(client.get<Todo>(`/todos/${id}`))
+    ),
+    withLogging(
+      `Fetching todo ${id}`,
+      todo => `Fetched todo: ${todo.title}`
+    )
+  );
+
+// Create todo
+export const createTodo = (
+  request: CreateTodoRequest
+): App.App<Todo> =>
+  pipe(
+    App.httpClient(),
+    App.chain(client =>
+      App.fromTaskEither(client.post<CreateTodoRequest, Todo>(
+        '/todos',
         request
       ))
     ),
     withLogging(
-      `Creating product: ${request.name}`,
-      product => `Created product with ID: ${product.id}`
+      `Creating todo: ${request.title}`,
+      todo => `Created todo with ID: ${todo.id}`
     )
   );
 
-// Update product
-export const updateProduct = (
+// Update todo
+export const updateTodo = (
   id: number,
-  request: CreateProductRequest
-): App.App<Product> =>
+  request: UpdateTodoRequest
+): App.App<Todo> =>
   pipe(
     App.httpClient(),
     App.chain(client =>
-      App.fromTaskEither(client.put<CreateProductRequest, Product>(
-        `/products/${id}`,
+      App.fromTaskEither(client.put<UpdateTodoRequest, Todo>(
+        `/todos/${id}`,
         request
       ))
     ),
-    // Invalidate cache after update
-    App.chain(product =>
-      pipe(
-        App.cache(),
-        App.chain(cacheOpt =>
-          cacheOpt
-            ? App.fromTaskEither(cacheOpt.invalidate(`product:${id}`))
-            : App.of(undefined)
-        ),
-        App.map(() => product)
-      )
-    ),
     withLogging(
-      `Updating product ${id}`,
-      product => `Updated product: ${product.name}`
+      `Updating todo ${id}`,
+      todo => `Updated todo: ${todo.title}`
     )
   );
 
-// Delete product
-export const deleteProduct = (id: number): App.App<void> =>
+// Toggle completion
+export const toggleTodo = (id: number): App.App<Todo> =>
   pipe(
     App.httpClient(),
     App.chain(client =>
-      App.fromTaskEither(client.delete(`/products/${id}`))
+      App.fromTaskEither(client.patch<Todo>(`/todos/${id}/toggle`))
     ),
     withLogging(
-      `Deleting product ${id}`,
-      () => `Deleted product ${id}`
+      `Toggling todo ${id}`,
+      todo => `Todo ${id} is now ${todo.isCompleted ? 'completed' : 'incomplete'}`
+    )
+  );
+
+// Delete todo
+export const deleteTodo = (id: number): App.App<void> =>
+  pipe(
+    App.httpClient(),
+    App.chain(client =>
+      App.fromTaskEither(client.delete(`/todos/${id}`))
+    ),
+    withLogging(
+      `Deleting todo ${id}`,
+      () => `Deleted todo ${id}`
     )
   );
 ```
@@ -569,67 +584,51 @@ export const deleteProduct = (id: number): App.App<void> =>
 
 ## Form Validation
 
-Using `io-ts` for runtime validation and `fp-ts` for validation logic:
+Using `fp-ts` for validation logic with error accumulation:
 
 ```typescript
-// features/products/validation.ts
-import * as t from 'io-ts';
+// features/todos/validation.ts
 import * as E from 'fp-ts/Either';
 import * as A from 'fp-ts/Apply';
 import { pipe } from 'fp-ts/function';
+import { getValidation } from 'fp-ts/Either';
+import { getSemigroup } from 'fp-ts/Array';
+import type { CreateTodoRequest } from './types';
 
-// Runtime type validation
-export const ProductCodec = t.type({
-  name: t.string,
-  price: t.number,
-});
-
-export type ProductInput = t.TypeOf<typeof ProductCodec>;
-
-// Validation errors
 export interface ValidationError {
   field: string;
   message: string;
 }
 
-// Validation result that can accumulate errors
 export type ValidationResult<A> = E.Either<ValidationError[], A>;
 
 // Individual field validators
-const validateName = (name: string): ValidationResult<string> =>
-  name.length > 0
-    ? E.right(name)
-    : E.left([{ field: 'name', message: 'Name is required' }]);
+const validateTitle = (title: string): ValidationResult<string> =>
+  title.trim().length > 0 && title.length <= 200
+    ? E.right(title)
+    : E.left([{
+        field: 'title',
+        message: 'Title is required and must be less than 200 characters'
+      }]);
 
-const validatePrice = (price: number): ValidationResult<number> =>
-  price > 0
-    ? E.right(price)
-    : E.left([{ field: 'price', message: 'Price must be greater than 0' }]);
+const validateDescription = (description: string | null): ValidationResult<string | null> =>
+  description === null || description.length <= 1000
+    ? E.right(description)
+    : E.left([{
+        field: 'description',
+        message: 'Description must be less than 1000 characters'
+      }]);
 
-// Combine validators with applicative
-export const validateProduct = (
-  input: ProductInput
-): ValidationResult<ProductInput> =>
-  pipe(
-    E.Do,
-    E.apS('name', validateName(input.name)),
-    E.apS('price', validatePrice(input.price)),
-    E.map(() => input)
-  );
-
-// Alternative: accumulate ALL errors using getValidation
-import { getValidation } from 'fp-ts/Either';
-import { getSemigroup } from 'fp-ts/Array';
-
+// Combine validators with applicative to accumulate ALL errors
 const validationApplicative = getValidation(getSemigroup<ValidationError>());
 
-export const validateProductAll = (
-  input: ProductInput
-): ValidationResult<ProductInput> =>
+export const validateTodo = (
+  input: CreateTodoRequest
+): ValidationResult<CreateTodoRequest> =>
   pipe(
     A.sequenceS(validationApplicative)({
-      name: validateName(input.name),
-      price: validatePrice(input.price),
+      title: validateTitle(input.title),
+      description: validateDescription(input.description),
     }),
     E.map(() => input)
   );
@@ -746,44 +745,102 @@ export const useAppQuery = <A>(
 ### React Components
 
 ```typescript
-// features/products/components/ProductList.tsx
+// features/todos/components/TodoList.tsx
 import React from 'react';
 import { useAppQuery, type RemoteData } from '../hooks';
-import { listProducts, type Product } from '../api';
+import { listTodos, toggleTodo, deleteTodo, type Todo } from '../api';
+import { useApp } from '../hooks';
 import type { AppEnv } from '../../../lib/AppEnv';
 
 interface Props {
   env: AppEnv;
+  onRefresh?: () => void;
 }
 
-export const ProductList: React.FC<Props> = ({ env }) => {
-  const { state, refetch } = useAppQuery(env, listProducts(), []);
+export const TodoList: React.FC<Props> = ({ env, onRefresh }) => {
+  const { state, refetch } = useAppQuery(env, listTodos(), []);
+  const { execute: executeToggle } = useApp<Todo>(env);
+  const { execute: executeDelete } = useApp<void>(env);
 
-  const renderContent = (state: RemoteData<Error, Product[]>) => {
+  const handleToggle = async (id: number) => {
+    await executeToggle(toggleTodo(id));
+    refetch();
+    onRefresh?.();
+  };
+
+  const handleDelete = async (id: number) => {
+    if (window.confirm('Are you sure you want to delete this todo?')) {
+      await executeDelete(deleteTodo(id));
+      refetch();
+      onRefresh?.();
+    }
+  };
+
+  const renderContent = (state: RemoteData<Error, Todo[]>) => {
     switch (state._tag) {
       case 'NotAsked':
-        return <div>Not loaded yet</div>;
-      
+        return <div className="info">Not loaded yet</div>;
+
       case 'Loading':
-        return <div>Loading products...</div>;
-      
+        return <div className="info">Loading todos...</div>;
+
       case 'Failure':
         return (
-          <div>
-            <p>Error: {state.error.message}</p>
-            <button onClick={refetch}>Retry</button>
+          <div className="error-container">
+            <p className="error">Error: {state.error.message}</p>
+            <button onClick={refetch} className="btn btn-secondary">
+              Retry
+            </button>
           </div>
         );
-      
+
       case 'Success':
+        if (state.data.length === 0) {
+          return (
+            <div className="empty-state">
+              <p>No todos yet. Create one to get started!</p>
+              <button onClick={refetch} className="btn btn-secondary">
+                Refresh
+              </button>
+            </div>
+          );
+        }
+
         return (
           <div>
-            <h2>Products</h2>
-            <button onClick={refetch}>Refresh</button>
-            <ul>
-              {state.data.map(product => (
-                <li key={product.id}>
-                  {product.name} - ${product.price}
+            <div className="list-header">
+              <h2>Your Todos</h2>
+              <button onClick={refetch} className="btn btn-secondary">
+                Refresh
+              </button>
+            </div>
+            <ul className="todo-list">
+              {state.data.map(todo => (
+                <li key={todo.id} className={`todo-item ${todo.isCompleted ? 'completed' : ''}`}>
+                  <div className="todo-content">
+                    <div className="todo-info">
+                      <h3>{todo.title}</h3>
+                      {todo.description && <p>{todo.description}</p>}
+                      <small>
+                        Created: {new Date(todo.createdAt).toLocaleString()}
+                        {todo.completedAt && ` | Completed: ${new Date(todo.completedAt).toLocaleString()}`}
+                      </small>
+                    </div>
+                    <div className="todo-actions">
+                      <button
+                        onClick={() => handleToggle(todo.id)}
+                        className={`btn ${todo.isCompleted ? 'btn-warning' : 'btn-success'}`}
+                      >
+                        {todo.isCompleted ? 'Undo' : 'Complete'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(todo.id)}
+                        className="btn btn-danger"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -792,39 +849,40 @@ export const ProductList: React.FC<Props> = ({ env }) => {
     }
   };
 
-  return <div className="product-list">{renderContent(state)}</div>;
+  return <div className="todo-list-container">{renderContent(state)}</div>;
 };
 ```
 
 ```typescript
-// features/products/components/ProductForm.tsx
+// features/todos/components/TodoForm.tsx
 import React, { useState } from 'react';
 import { pipe } from 'fp-ts/function';
 import * as E from 'fp-ts/Either';
 import { useApp } from '../hooks';
-import { createProduct, type CreateProductRequest } from '../api';
-import { validateProductAll, type ValidationError } from '../validation';
+import { createTodo, type CreateTodoRequest } from '../api';
+import { validateTodo, type ValidationError } from '../validation';
 import type { AppEnv } from '../../../lib/AppEnv';
+import type { Todo } from '../types';
 
 interface Props {
   env: AppEnv;
   onSuccess?: () => void;
 }
 
-export const ProductForm: React.FC<Props> = ({ env, onSuccess }) => {
-  const [formData, setFormData] = useState<CreateProductRequest>({
-    name: '',
-    price: 0,
+export const TodoForm: React.FC<Props> = ({ env, onSuccess }) => {
+  const [formData, setFormData] = useState<CreateTodoRequest>({
+    title: '',
+    description: null,
   });
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
-  const { state, execute } = useApp<Product>(env);
+  const { state, execute } = useApp<Todo>(env);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validate
-    const validationResult = validateProductAll(formData);
-    
+    const validationResult = validateTodo(formData);
+
     pipe(
       validationResult,
       E.fold(
@@ -833,16 +891,16 @@ export const ProductForm: React.FC<Props> = ({ env, onSuccess }) => {
           setValidationErrors(errors);
         },
         // Validation passed
-        (validData) => {
+        async (validData) => {
           setValidationErrors([]);
-          
+
           // Execute the API call
-          execute(createProduct(validData)).then(() => {
-            if (state._tag === 'Success') {
-              setFormData({ name: '', price: 0 });
-              onSuccess?.();
-            }
-          });
+          await execute(createTodo(validData));
+
+          if (state._tag === 'Success' || state._tag === 'NotAsked') {
+            setFormData({ title: '', description: null });
+            onSuccess?.();
+          }
         }
       )
     );
@@ -852,45 +910,51 @@ export const ProductForm: React.FC<Props> = ({ env, onSuccess }) => {
     validationErrors.find(e => e.field === field)?.message;
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div>
-        <label>
-          Name:
-          <input
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          />
+    <form onSubmit={handleSubmit} className="todo-form">
+      <div className="form-group">
+        <label htmlFor="title">
+          Title *
         </label>
-        {getFieldError('name') && (
-          <span className="error">{getFieldError('name')}</span>
+        <input
+          id="title"
+          type="text"
+          value={formData.title}
+          onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+          className={getFieldError('title') ? 'error-input' : ''}
+          placeholder="Enter todo title"
+        />
+        {getFieldError('title') && (
+          <span className="error-message">{getFieldError('title')}</span>
         )}
       </div>
 
-      <div>
-        <label>
-          Price:
-          <input
-            type="number"
-            value={formData.price}
-            onChange={(e) => setFormData({ ...formData, price: +e.target.value })}
-          />
+      <div className="form-group">
+        <label htmlFor="description">
+          Description
         </label>
-        {getFieldError('price') && (
-          <span className="error">{getFieldError('price')}</span>
+        <textarea
+          id="description"
+          value={formData.description || ''}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value || null })}
+          className={getFieldError('description') ? 'error-input' : ''}
+          placeholder="Enter todo description (optional)"
+          rows={3}
+        />
+        {getFieldError('description') && (
+          <span className="error-message">{getFieldError('description')}</span>
         )}
       </div>
 
-      <button type="submit" disabled={state._tag === 'Loading'}>
-        {state._tag === 'Loading' ? 'Creating...' : 'Create Product'}
+      <button type="submit" disabled={state._tag === 'Loading'} className="btn btn-primary">
+        {state._tag === 'Loading' ? 'Creating...' : 'Create Todo'}
       </button>
 
       {state._tag === 'Failure' && (
-        <div className="error">Error: {state.error.message}</div>
+        <div className="error-message">Error: {state.error.message}</div>
       )}
 
       {state._tag === 'Success' && (
-        <div className="success">Product created successfully!</div>
+        <div className="success-message">Todo created successfully!</div>
       )}
     </form>
   );
@@ -901,40 +965,61 @@ export const ProductForm: React.FC<Props> = ({ env, onSuccess }) => {
 
 ```typescript
 // App.tsx
-import React from 'react';
-import { createHttpClient } from './lib/httpClient';
+import React, { useState } from 'react';
+import { createHttpClient } from './lib/HttpClient';
 import type { AppEnv } from './lib/AppEnv';
-import { ProductList } from './features/products/components/ProductList';
-import { ProductForm } from './features/products/components/ProductForm';
+import { TodoList } from './features/todos/components/TodoList';
+import { TodoForm } from './features/todos/components/TodoForm';
+import './App.css';
 
 // Create the environment
 const env: AppEnv = {
-  httpClient: createHttpClient('http://localhost:5000/api'),
+  httpClient: createHttpClient('http://localhost:5000'),
   logger: {
-    info: (message) => console.info(message),
-    warn: (message) => console.warn(message),
-    error: (message, err) => console.error(message, err),
+    info: (message) => console.info('[INFO]', message),
+    warn: (message) => console.warn('[WARN]', message),
+    error: (message, err) => console.error('[ERROR]', message, err),
   },
-  // Optional: add cache if needed
+  baseUrl: 'http://localhost:5000',
 };
 
 export const App: React.FC = () => {
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleSuccess = () => {
+    // Trigger refresh of the list
+    setRefreshKey(prev => prev + 1);
+  };
+
   return (
     <div className="app">
-      <h1>Product Management</h1>
-      
-      <section>
-        <h2>Create Product</h2>
-        <ProductForm env={env} />
-      </section>
+      <header className="app-header">
+        <h1>Functional Todo App</h1>
+        <p className="subtitle">Built with fp-ts & React</p>
+      </header>
 
-      <section>
-        <h2>All Products</h2>
-        <ProductList env={env} />
-      </section>
+      <div className="container">
+        <section className="section">
+          <h2>Create New Todo</h2>
+          <TodoForm env={env} onSuccess={handleSuccess} />
+        </section>
+
+        <section className="section">
+          <TodoList key={refreshKey} env={env} onRefresh={handleSuccess} />
+        </section>
+      </div>
+
+      <footer className="app-footer">
+        <p>
+          Functional Programming with <strong>fp-ts</strong> |
+          Backend: ASP.NET Core with <strong>language-ext</strong>
+        </p>
+      </footer>
     </div>
   );
 };
+
+export default App;
 ```
 
 ---
@@ -978,68 +1063,68 @@ export const useAppQuery = <A>(
 ### With Redux Toolkit (For Large Apps)
 
 ```typescript
-// store/productsSlice.ts
+// store/todosSlice.ts
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import * as E from 'fp-ts/Either';
 import { pipe } from 'fp-ts/function';
 import * as App from '../lib/AppMonad';
-import { listProducts, type Product } from '../features/products/api';
+import { listTodos, type Todo } from '../features/todos/api';
 import type { AppEnv } from '../lib/AppEnv';
 
-interface ProductsState {
-  items: Product[];
+interface TodosState {
+  items: Todo[];
   loading: boolean;
   error: string | null;
 }
 
-const initialState: ProductsState = {
+const initialState: TodosState = {
   items: [],
   loading: false,
   error: null,
 };
 
 // Thunk that runs an App operation
-export const fetchProducts = createAsyncThunk<
-  Product[],
+export const fetchTodos = createAsyncThunk<
+  Todo[],
   AppEnv,
   { rejectValue: string }
 >(
-  'products/fetchProducts',
+  'todos/fetchTodos',
   async (env, { rejectWithValue }) => {
-    const result = await pipe(listProducts(), App.run(env))();
-    
+    const result = await pipe(listTodos(), App.run(env))();
+
     return pipe(
       result,
       E.fold(
         (error) => rejectWithValue(error.message),
-        (products) => products
+        (todos) => todos
       )
     );
   }
 );
 
-export const productsSlice = createSlice({
-  name: 'products',
+export const todosSlice = createSlice({
+  name: 'todos',
   initialState,
   reducers: {},
   extraReducers: (builder) => {
     builder
-      .addCase(fetchProducts.pending, (state) => {
+      .addCase(fetchTodos.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchProducts.fulfilled, (state, action) => {
+      .addCase(fetchTodos.fulfilled, (state, action) => {
         state.loading = false;
         state.items = action.payload;
       })
-      .addCase(fetchProducts.rejected, (state, action) => {
+      .addCase(fetchTodos.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload ?? 'Unknown error';
       });
   },
 });
 
-export default productsSlice.reducer;
+export default todosSlice.reducer;
 ```
 
 ---
@@ -1049,14 +1134,14 @@ export default productsSlice.reducer;
 ### Pattern 1: Sequential Operations
 
 ```typescript
-// Fetch product, then fetch related items
-const getProductWithRelated = (id: number): App.App<ProductWithRelated> =>
+// Fetch todo, then fetch related items (e.g., subtasks or comments)
+const getTodoWithDetails = (id: number): App.App<TodoWithDetails> =>
   pipe(
-    getProduct(id),
-    App.chain(product =>
+    getTodo(id),
+    App.chain(todo =>
       pipe(
-        getRelatedProducts(product.categoryId),
-        App.map(related => ({ product, related }))
+        getTodoComments(todo.id),
+        App.map(comments => ({ todo, comments }))
       )
     )
   );
@@ -1068,11 +1153,11 @@ const getProductWithRelated = (id: number): App.App<ProductWithRelated> =>
 import * as A from 'fp-ts/Array';
 import { sequenceT } from 'fp-ts/Apply';
 
-// Fetch multiple products in parallel
-const getMultipleProducts = (ids: number[]): App.App<Product[]> =>
+// Fetch multiple todos in parallel
+const getMultipleTodos = (ids: number[]): App.App<Todo[]> =>
   pipe(
     ids,
-    A.map(id => getProduct(id)),
+    A.map(id => getTodo(id)),
     A.sequence(App.Applicative) // Requires defining Applicative instance
   );
 
@@ -1080,14 +1165,14 @@ const getMultipleProducts = (ids: number[]): App.App<Product[]> =>
 const getDashboardData = (): App.App<DashboardData> =>
   pipe(
     sequenceT(App.Applicative)(
-      listProducts(),
-      getTotalRevenue(),
-      getRecentOrders()
+      listTodos(),
+      getCompletedCount(),
+      getRecentActivity()
     ),
-    App.map(([products, revenue, orders]) => ({
-      products,
-      revenue,
-      orders
+    App.map(([todos, completed, activity]) => ({
+      todos,
+      completed,
+      activity
     }))
   );
 ```
@@ -1095,16 +1180,16 @@ const getDashboardData = (): App.App<DashboardData> =>
 ### Pattern 3: Conditional Operations
 
 ```typescript
-const getProductOrCreate = (id: number): App.App<Product> =>
+const getTodoOrCreate = (id: number): App.App<Todo> =>
   pipe(
-    getProduct(id),
-    // On error, create a default product
+    getTodo(id),
+    // On error, create a default todo
     env => pipe(
-      env(getProduct(id)),
+      env(getTodo(id)),
       TE.orElse(err =>
         pipe(
-          App.logInfo(`Product ${id} not found, creating default`),
-          App.chain(() => createProduct({ name: 'Default', price: 0 }))
+          App.logInfo(`Todo ${id} not found, creating default`),
+          App.chain(() => createTodo({ title: 'Default', description: null }))
         )(env)
       )
     )
@@ -1115,21 +1200,21 @@ const getProductOrCreate = (id: number): App.App<Product> =>
 
 ```typescript
 // Try primary, fallback to secondary
-const getProductResilient = (id: number): App.App<Product> =>
+const getTodoResilient = (id: number): App.App<Todo> =>
   pipe(
-    getProduct(id),
+    getTodo(id),
     env => pipe(
-      env(getProduct(id)),
+      env(getTodo(id)),
       TE.orElse(() =>
         pipe(
           App.logWarn(`Primary failed, trying cache`),
-          App.chain(() => getProductFromCache(id))
+          App.chain(() => getTodoFromCache(id))
         )(env)
       ),
       TE.orElse(() =>
         pipe(
           App.logWarn(`Cache failed, returning default`),
-          App.map(() => getDefaultProduct(id))
+          App.map(() => getDefaultTodo(id))
         )(env)
       )
     )
@@ -1140,20 +1225,20 @@ const getProductResilient = (id: number): App.App<Product> =>
 
 ```typescript
 // Process array with individual error handling
-const createMultipleProducts = (
-  requests: CreateProductRequest[]
-): App.App<Array<E.Either<Error, Product>>> =>
+const createMultipleTodos = (
+  requests: CreateTodoRequest[]
+): App.App<Array<E.Either<Error, Todo>>> =>
   pipe(
     requests,
     A.traverse(App.Applicative)(request =>
       pipe(
-        createProduct(request),
-        App.chain(product => App.of(E.right(product))),
+        createTodo(request),
+        App.chain(todo => App.of(E.right(todo))),
         env => pipe(
-          env(createProduct(request)),
+          env(createTodo(request)),
           TE.fold(
             err => TE.of(E.left(err)),
-            product => TE.of(E.right(product))
+            todo => TE.of(E.right(todo))
           )
         )
       )
@@ -1169,15 +1254,15 @@ const createMultipleProducts = (
 
 ```typescript
 // ❌ Bad - side effect hidden
-const getProduct = (id: number): App.App<Product> => {
+const getTodo = (id: number): App.App<Todo> => {
   console.log(`Fetching ${id}`); // Hidden side effect
   return fetchFromApi(id);
 };
 
 // ✅ Good - side effect explicit
-const getProduct = (id: number): App.App<Product> =>
+const getTodo = (id: number): App.App<Todo> =>
   pipe(
-    App.logInfo(`Fetching product ${id}`),
+    App.logInfo(`Fetching todo ${id}`),
     App.chain(() => fetchFromApi(id))
   );
 ```
@@ -1186,7 +1271,7 @@ const getProduct = (id: number): App.App<Product> =>
 
 ```typescript
 // Type-safe state matching
-const renderProductState = (state: RemoteData<Error, Product>) => {
+const renderTodoState = (state: RemoteData<Error, Todo>) => {
   switch (state._tag) {
     case 'NotAsked':
       return <div>Not loaded</div>;
@@ -1195,7 +1280,7 @@ const renderProductState = (state: RemoteData<Error, Product>) => {
     case 'Failure':
       return <div>Error: {state.error.message}</div>;
     case 'Success':
-      return <div>{state.data.name}</div>;
+      return <div>{state.data.title}</div>;
   }
 };
 ```
@@ -1218,15 +1303,15 @@ const apiCallWithEffects = (url: string) =>
 ```typescript
 // ❌ Bad - ignoring errors
 useEffect(() => {
-  App.run(env)(getProducts())();
+  App.run(env)(listTodos())();
 }, []);
 
 // ✅ Good - handling errors
 useEffect(() => {
-  App.run(env)(getProducts())().then(
+  App.run(env)(listTodos())().then(
     E.fold(
-      err => console.error('Failed to load products:', err),
-      products => console.log('Loaded products:', products)
+      err => console.error('Failed to load todos:', err),
+      todos => console.log('Loaded todos:', todos)
     )
   );
 }, []);
@@ -1248,13 +1333,13 @@ const createApiCall = <A>(
   );
 
 // Use it
-const getProduct = (id: number) =>
+const getTodo = (id: number) =>
   createApiCall(
-    `get-product-${id}`,
+    `get-todo-${id}`,
     pipe(
       App.httpClient(),
-      App.chain(client => 
-        App.fromTaskEither(client.get<Product>(`/products/${id}`))
+      App.chain(client =>
+        App.fromTaskEither(client.get<Todo>(`/todos/${id}`))
       )
     )
   );
@@ -1272,16 +1357,16 @@ Ramda is great for **data transformation** but lacks type safety for effects:
 import * as R from 'ramda';
 
 // Ramda - good for transformations
-const processProducts = R.pipe(
-  R.filter(R.propSatisfies(R.gt(R.__, 100), 'price')),
-  R.map(R.pick(['id', 'name', 'price'])),
-  R.sortBy(R.prop('price'))
+const processTodos = R.pipe(
+  R.filter(R.propEq('isCompleted', false)),
+  R.map(R.pick(['id', 'title', 'createdAt'])),
+  R.sortBy(R.prop('createdAt'))
 );
 
 // But handling async/effects is not as elegant
 const fetchAndProcess = async (ids: number[]) => {
-  const products = await Promise.all(ids.map(fetchProduct));
-  return processProducts(products);
+  const todos = await Promise.all(ids.map(fetchTodo));
+  return processTodos(todos);
 };
 ```
 
@@ -1294,16 +1379,16 @@ import { pipe } from 'fp-ts/function';
 import * as A from 'fp-ts/Array';
 
 // fp-ts - type-safe effects
-const fetchAndProcess = (ids: number[]): App.App<Product[]> =>
+const fetchAndProcess = (ids: number[]): App.App<Todo[]> =>
   pipe(
     ids,
-    A.traverse(App.Applicative)(fetchProduct),
-    App.map(products =>
+    A.traverse(App.Applicative)(fetchTodo),
+    App.map(todos =>
       pipe(
-        products,
-        A.filter(p => p.price > 100),
-        A.map(p => ({ id: p.id, name: p.name, price: p.price })),
-        A.sortBy([Ord.contramap((p: Product) => p.price)(N.Ord)])
+        todos,
+        A.filter(t => !t.isCompleted),
+        A.map(t => ({ id: t.id, title: t.title, createdAt: t.createdAt })),
+        A.sortBy([Ord.contramap((t: Todo) => t.createdAt)(S.Ord)])
       )
     )
   );
@@ -1318,9 +1403,9 @@ const fetchAndProcess = (ids: number[]): App.App<Product[]> =>
 ## Resources
 
 - [fp-ts Documentation](https://gcanti.github.io/fp-ts/)
-- [io-ts for Runtime Type Checking](https://github.com/gcanti/io-ts)
 - [Functional Programming in TypeScript](https://github.com/enricopolanski/functional-programming)
 - [Remote Data Pattern](https://github.com/devexperts/remote-data-ts)
+- [language-ext for C#](https://github.com/louthy/language-ext) - Backend equivalent
 
 ---
 
@@ -1334,7 +1419,7 @@ The functional patterns from backend (language-ext) translate beautifully to fro
 | `DbEnv` | `AppEnv` |
 | `ReaderT<DbEnv, IO, A>` | `Reader<AppEnv, TaskEither<Error, A>>` |
 | `WithTransaction()` | `withRetry()`, `withCache()` |
-| `ProductRepository` | Product API module |
+| `TodoRepository` | Todo API module |
 | ASP.NET endpoints | React hooks |
 
 The benefits are the same: **type safety, composability, testability, and maintainability**! 🚀
