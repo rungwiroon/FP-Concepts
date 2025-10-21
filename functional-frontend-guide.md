@@ -33,14 +33,14 @@ Just like the backend with language-ext, we can compose multiple effects in a ty
 
 ### Key Benefits
 
-✅ **Type-safe** - compiler catches errors
-✅ **Composable** - stack effects naturally
-✅ **Testable** - easy to mock dependencies
-✅ **Declarative** - clear intent
-✅ **Error handling** - automatic short-circuiting
-✅ **Generator syntax** - readable imperative-style code
-✅ **Unified API** - one Effect type for all operations
-✅ **Rich ecosystem** - scheduling, resources, metrics, tracing
+✅ **Type-safe** - compiler catches errors<br/>
+✅ **Composable** - stack effects naturally<br/>
+✅ **Testable** - easy to mock dependencies<br/>
+✅ **Declarative** - clear intent<br/>
+✅ **Error handling** - automatic short-circuiting<br/>
+✅ **Generator syntax** - readable imperative-style code<br/>
+✅ **Unified API** - one Effect type for all operations<br/>
+✅ **Rich ecosystem** - scheduling, resources, metrics, tracing<br/>
 
 ---
 
@@ -1090,59 +1090,12 @@ const getTodo = (id: number) =>
 
 ---
 
-## Comparison: fp-ts vs Effect
-
-### Why Effect?
-
-| Feature | fp-ts | Effect |
-|---------|-------|--------|
-| **Type Signature** | `Reader<R, TaskEither<E, A>>` (manual composition) | `Effect<A, E, R>` (unified) |
-| **Syntax** | `pipe` chains | `Effect.gen` (imperative style) |
-| **DI** | Manual Reader pattern | Context.Tag (automatic) |
-| **Error Handling** | `Either` + `TaskEither` | Built into Effect |
-| **Scheduling** | Manual | Built-in Schedule |
-| **Resources** | Manual | Built-in scope/finalizers |
-| **Type Inference** | Good | Excellent |
-| **Learning Curve** | Steep | Moderate |
-
-### Migration Example
-
-**fp-ts:**
-```typescript
-const getProduct = (id: number): App<Product> =>
-  pipe(
-    App.httpClient(),
-    App.chain(client => App.fromTaskEither(client.get<Product>(`/products/${id}`))),
-    withLogging(
-      `Fetching product ${id}`,
-      product => `Fetched: ${product.name}`
-    )
-  );
-```
-
-**Effect:**
-```typescript
-const getProduct = (id: number): App<Product> =>
-  Effect.gen(function* (_) {
-    const client = yield* _(App.httpClient());
-    return yield* _(client.get<Product>(`/products/${id}`));
-  }).pipe(
-    withLogging(
-      `Fetching product ${id}`,
-      product => `Fetched: ${product.name}`
-    )
-  );
-```
-
----
-
 ## Resources
 
 - [Effect Documentation](https://effect.website/)
 - [Effect GitHub](https://github.com/Effect-TS/effect)
 - [Effect Discord Community](https://discord.gg/effect-ts)
 - [Effect Tutorial](https://effect.website/docs/introduction)
-- [Migration Guide from fp-ts](./todo-app-frontend/FP-TS-TO-EFFECT-MIGRATION.md)
 
 ---
 
