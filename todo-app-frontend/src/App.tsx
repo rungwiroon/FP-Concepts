@@ -28,7 +28,7 @@ export const App: React.FC = () => {
     <div className="app">
       <header className="app-header">
         <h1>📝 Functional Todo App</h1>
-        <p className="subtitle">Built with fp-ts & React</p>
+        <p className="subtitle">Built with Effect-TS & React</p>
       </header>
 
       <div className="container">
@@ -44,7 +44,7 @@ export const App: React.FC = () => {
 
       <footer className="app-footer">
         <p>
-          Functional Programming with <strong>fp-ts</strong> |
+          Functional Programming with <strong>Effect-TS</strong> |
           Backend: ASP.NET Core with <strong>language-ext</strong>
         </p>
       </footer>
