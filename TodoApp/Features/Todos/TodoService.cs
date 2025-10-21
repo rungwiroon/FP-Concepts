@@ -1,7 +1,6 @@
 using LanguageExt;
 using LanguageExt.Common;
 using LanguageExt.Traits;
-using Microsoft.EntityFrameworkCore;
 using TodoApp.Domain;
 using TodoApp.Infrastructure.Capabilities;
 using TodoApp.Infrastructure.Extensions;
@@ -13,6 +12,7 @@ namespace TodoApp.Features.Todos;
 /// <summary>
 /// TodoService using Has<M, RT, T>.ask pattern with full CRUD operations.
 /// Generic over M (monad) and RT (runtime with capabilities).
+/// Uses high-level domain operations - no DbContext exposure!
 /// </summary>
 public static class TodoService<M, RT>
     where M : Monad<M>, MonadIO<M>, Fallible<M>
@@ -23,24 +23,20 @@ public static class TodoService<M, RT>
     /// </summary>
     public static K<M, List<Todo>> List() =>
         from _ in Logger<M, RT>.logInfo("Listing all todos")
-        from todos in Database<M, RT>.liftIO((ctx, ct) =>
-            ctx.Todos.OrderByDescending(t => t.CreatedAt).ToListAsync(ct))
-        from __ in Logger<M, RT>.logInfo("Found {TodosCount} todos", todos.Count)
-        select todos;
+        from todos in Database<M, RT>.getAllTodos()
+        from sorted in M.Pure(todos.OrderByDescending(t => t.CreatedAt).ToList())
+        from __ in Logger<M, RT>.logInfo("Found {TodosCount} todos", sorted.Count)
+        select sorted;
 
     /// <summary>
     /// Get a single todo by ID.
     /// Returns error if not found (404).
-    /// Pattern: Optional() + .To<M, A>() for not-found handling
-    /// Uses AsNoTracking() to avoid EF Core tracking conflicts
+    /// Pattern: Option + .To<M, A>() for not-found handling
     /// </summary>
     public static K<M, Todo> Get(int id) =>
         from _ in Logger<M, RT>.logInfo("Getting todo by ID: {Id}", id)
-        from todo in Database<M, RT>.liftIO((ctx, ct) =>
-            ctx.Todos.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == id, ct)
-                .Map(Optional))
-            .Bind(opt => opt.To<M, Todo>(() => Error.New(404, $"Todo with id {id} not found")))
+        from todoOpt in Database<M, RT>.getTodoById(id)
+        from todo in todoOpt.To<M, Todo>(() => Error.New(404, $"Todo with id {id} not found"))
         from __ in Logger<M, RT>.logInfo("Found todo: {TodoTitle}", todo.Title)
         select todo;
 
@@ -62,11 +58,7 @@ public static class TodoService<M, RT>
             CreatedAt = now
         })
         from validated in TodoValidation.Validate(newTodo).To<M, Todo>()
-        from saved in Database<M, RT>.liftIO((ctx, ct) =>
-        {
-            ctx.Todos.Add(validated);
-            return ctx.SaveChangesAsync(ct).Map(_ => validated);
-        })
+        from saved in Database<M, RT>.addTodo(validated)
         from __ in Logger<M, RT>.logInfo("Created todo with ID: {SavedId}", saved.Id)
         select saved;
 
@@ -87,50 +79,35 @@ public static class TodoService<M, RT>
             Description = description
         })
         from validated in TodoValidation.Validate(updatedTodo).To<M, Todo>()
-        from saved in Database<M, RT>.liftIO((ctx, ct) =>
-        {
-            ctx.Entry(validated).State = EntityState.Modified;
-            return ctx.SaveChangesAsync(ct).Map(_ => validated);
-        })
+        from saved in Database<M, RT>.updateTodo(validated)
         from __ in Logger<M, RT>.logInfo("Updated todo {Id}", id)
         select saved;
 
     /// <summary>
     /// Toggle completion status of a todo.
-    /// Pattern: Get existing + inline entity update
+    /// Pattern: Get existing + create toggled entity + update
     /// </summary>
     public static K<M, Todo> ToggleComplete(int id) =>
         from _ in Logger<M, RT>.logInfo("Toggling completion for todo {Id}", id)
         from existing in Get(id)
         from now in Time<M, RT>.UtcNow
-        from updated in Database<M, RT>.liftIO((ctx, ct) =>
+        from toggled in M.Pure(existing with
         {
-            // Create toggled entity
-            var toggledTodo = existing with
-            {
-                IsCompleted = !existing.IsCompleted,
-                CompletedAt = !existing.IsCompleted ? now : null
-            };
-
-            // Update entity
-            ctx.Entry(toggledTodo).State = EntityState.Modified;
-            return ctx.SaveChangesAsync(ct).Map(_ => toggledTodo);
+            IsCompleted = !existing.IsCompleted,
+            CompletedAt = !existing.IsCompleted ? now : null
         })
+        from updated in Database<M, RT>.updateTodo(toggled)
         from __ in Logger<M, RT>.logInfo("Todo {Id} marked as {Status}", id, updated.IsCompleted ? "completed" : "incomplete")
         select updated;
 
     /// <summary>
     /// Delete a todo by ID.
-    /// Pattern: Get existing + inline removal
+    /// Pattern: Get existing + delete
     /// </summary>
     public static K<M, Unit> Delete(int id) =>
         from _ in Logger<M, RT>.logInfo("Deleting todo {Id}", id)
         from existing in Get(id)
-        from __ in Database<M, RT>.liftIO((ctx, ct) =>
-        {
-            ctx.Todos.Remove(existing);
-            return ctx.SaveChangesAsync(ct).Map(_ => unit);
-        })
+        from __ in Database<M, RT>.deleteTodo(existing)
         from ___ in Logger<M, RT>.logInfo("Deleted todo {Id}", id)
         select unit;
 }

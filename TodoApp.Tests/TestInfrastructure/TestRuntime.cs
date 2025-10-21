@@ -7,21 +7,20 @@ namespace TodoApp.Tests.TestInfrastructure;
 
 /// <summary>
 /// Test runtime that provides test implementations of all traits.
-/// This allows for complete control over dependencies in unit tests.
+/// No EF Core - pure in-memory implementations for true unit testing!
 /// </summary>
 public class TestRuntime :
     Has<Eff<TestRuntime>, DatabaseIO>,
     Has<Eff<TestRuntime>, LoggerIO>,
-    Has<Eff<TestRuntime>, TimeIO>,
-    IDisposable
+    Has<Eff<TestRuntime>, TimeIO>
 {
     public TestDatabaseIO Database { get; }
     public TestLoggerIO Logger { get; }
     public TestTimeIO Time { get; }
 
-    public TestRuntime(string? databaseName = null, DateTime? currentTime = null)
+    public TestRuntime(DateTime? currentTime = null)
     {
-        Database = new TestDatabaseIO(databaseName);
+        Database = new TestDatabaseIO();
         Logger = new TestLoggerIO();
         Time = new TestTimeIO(currentTime);
     }
@@ -37,9 +36,4 @@ public class TestRuntime :
     // Implement Has<M, T>.ask for TimeIO
     static K<Eff<TestRuntime>, TimeIO> Has<Eff<TestRuntime>, TimeIO>.Ask =>
         liftEff((Func<TestRuntime, TimeIO>)(rt => rt.Time));
-
-    public void Dispose()
-    {
-        Database?.Dispose();
-    }
 }
