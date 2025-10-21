@@ -1,4 +1,4 @@
-import { TaskEither } from 'fp-ts/TaskEither';
+import { Context, Effect } from 'effect';
 
 export interface Logger {
   info: (message: string) => void;
@@ -7,13 +7,27 @@ export interface Logger {
 }
 
 export interface HttpClient {
-  get: <A>(url: string) => TaskEither<Error, A>;
-  post: <A, B>(url: string, body: A) => TaskEither<Error, B>;
-  put: <A, B>(url: string, body: A) => TaskEither<Error, B>;
-  patch: <A>(url: string) => TaskEither<Error, A>;
-  delete: (url: string) => TaskEither<Error, void>;
+  get: <A>(url: string) => Effect.Effect<A, Error>;
+  post: <A, B>(url: string, body: A) => Effect.Effect<B, Error>;
+  put: <A, B>(url: string, body: A) => Effect.Effect<B, Error>;
+  patch: <A>(url: string) => Effect.Effect<A, Error>;
+  delete: (url: string) => Effect.Effect<void, Error>;
 }
 
+// Define Context Tags for dependency injection
+export class LoggerService extends Context.Tag('LoggerService')<
+  LoggerService,
+  Logger
+>() {}
+
+export class HttpClientService extends Context.Tag('HttpClientService')<
+  HttpClientService,
+  HttpClient
+>() {}
+
+export class BaseUrl extends Context.Tag('BaseUrl')<BaseUrl, string>() {}
+
+// Combined environment for convenience
 export interface AppEnv {
   httpClient: HttpClient;
   logger: Logger;
