@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { pipe } from 'fp-ts/function';
-import * as E from 'fp-ts/Either';
+import { Either } from 'effect';
 import { useApp } from '../hooks';
 import { createTodo, type CreateTodoRequest } from '../api';
 import { validateTodo, type ValidationError } from '../validation';
@@ -26,27 +25,21 @@ export const TodoForm: React.FC<Props> = ({ env, onSuccess }) => {
     // Validate
     const validationResult = validateTodo(formData);
 
-    pipe(
-      validationResult,
-      E.fold(
-        // Validation failed
-        (errors) => {
-          setValidationErrors(errors);
-        },
-        // Validation passed
-        async (validData) => {
-          setValidationErrors([]);
+    if (Either.isLeft(validationResult)) {
+      // Validation failed
+      setValidationErrors(validationResult.left);
+    } else {
+      // Validation passed
+      setValidationErrors([]);
 
-          // Execute the API call
-          await execute(createTodo(validData));
+      // Execute the API call
+      await execute(createTodo(validationResult.right));
 
-          if (state._tag === 'Success' || state._tag === 'NotAsked') {
-            setFormData({ title: '', description: null });
-            onSuccess?.();
-          }
-        }
-      )
-    );
+      if (state._tag === 'Success' || state._tag === 'NotAsked') {
+        setFormData({ title: '', description: null });
+        onSuccess?.();
+      }
+    }
   };
 
   const getFieldError = (field: string) =>

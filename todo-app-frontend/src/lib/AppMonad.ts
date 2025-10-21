@@ -1,80 +1,54 @@
-import * as R from 'fp-ts/Reader';
-import * as TE from 'fp-ts/TaskEither';
-import { pipe } from 'fp-ts/function';
-import type { AppEnv } from './AppEnv';
+import { Effect } from 'effect';
+import { HttpClientService, LoggerService, type AppEnv } from './AppEnv';
 
-// App<A> = Reader<AppEnv, TaskEither<Error, A>>
-export type App<A> = R.Reader<AppEnv, TE.TaskEither<Error, A>>;
+// App<A> = Effect that requires HttpClient and Logger services, may fail with Error, and succeeds with A
+export type App<A> = Effect.Effect<A, Error, HttpClientService | LoggerService>;
 
 // Basic constructors
-export const of = <A>(a: A): App<A> => 
-  R.of(TE.of(a));
+export const succeed = <A>(a: A): App<A> =>
+  Effect.succeed(a);
 
-export const fail = <A>(error: Error): App<A> => 
-  R.of(TE.left(error));
+export const fail = <A = never>(error: Error): App<A> =>
+  Effect.fail(error);
 
-// Lift a TaskEither into App
-export const fromTaskEither = <A>(te: TE.TaskEither<Error, A>): App<A> =>
-  R.of(te);
+// Lift a promise into App
+export const fromPromise = <A>(f: () => Promise<A>): App<A> =>
+  Effect.tryPromise({
+    try: f,
+    catch: (reason) => reason instanceof Error ? reason : new Error(String(reason))
+  });
 
-// Access the environment
-export const ask = (): App<AppEnv> =>
-  R.asks((env: AppEnv) => TE.of(env));
-
-// Lift an async operation
-export const fromAsync = <A>(f: () => Promise<A>): App<A> =>
-  R.of(TE.tryCatch(
-    f,
-    (reason) => reason instanceof Error ? reason : new Error(String(reason))
-  ));
-
-// Map over the result
-export const map = <A, B>(f: (a: A) => B) => 
-  (fa: App<A>): App<B> =>
-    pipe(fa, R.map(TE.map(f)));
-
-// FlatMap for chaining
-export const chain = <A, B>(f: (a: A) => App<B>) => 
-  (fa: App<A>): App<B> =>
-    (env: AppEnv) =>
-      pipe(
-        fa(env),
-        TE.chain(a => f(a)(env))
-      );
-
-// Run the App with an environment
-export const run = <A>(env: AppEnv) => 
-  (app: App<A>): TE.TaskEither<Error, A> =>
-    app(env);
-
-// Accessing dependencies
+// Access the logger service
 export const logger = (): App<AppEnv['logger']> =>
-  pipe(
-    ask(),
-    map(env => env.logger)
-  );
+  LoggerService;
 
+// Access the http client service
 export const httpClient = (): App<AppEnv['httpClient']> =>
-  pipe(
-    ask(),
-    map(env => env.httpClient)
-  );
+  HttpClientService;
 
 // Logging operations
 export const logInfo = (message: string): App<void> =>
-  pipe(
-    logger(),
-    chain(log => fromAsync(() => Promise.resolve(log.info(message))))
-  );
+  Effect.gen(function* (_) {
+    const log = yield* _(LoggerService);
+    log.info(message);
+  });
 
 export const logError = (message: string, err?: unknown): App<void> =>
-  pipe(
-    logger(),
-    chain(log => fromAsync(() => Promise.resolve(log.error(message, err))))
-  );
+  Effect.gen(function* (_) {
+    const log = yield* _(LoggerService);
+    log.error(message, err);
+  });
 
 export const logWarn = (message: string): App<void> =>
-  pipe(
-    logger(),
-    chain(log => fromAsync(() => Promise.resolve(log.warn(message))))
-  );
+  Effect.gen(function* (_) {
+    const log = yield* _(LoggerService);
+    log.warn(message);
+  });
+
+// Re-export common Effect utilities for convenience
+export const map = Effect.map;
+export const flatMap = Effect.flatMap;
+export const gen = Effect.gen;
+export const all = Effect.all;
+export const catchAll = Effect.catchAll;
+export const tap = Effect.tap;
