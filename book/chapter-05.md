@@ -74,6 +74,88 @@ TodoApp/
 └── Program.cs                     # API endpoints & DI setup
 ```
 
+### ภาพรวมการทำงาน
+
+มาดูว่าเมื่อมี request เข้ามา แต่ละ layer ทำงานอย่างไร:
+
+**Request Flow:**
+
+```
+1. Client ส่ง HTTP Request
+   ↓
+2. Program.cs (API Layer) - รับ request
+   ↓
+3. สร้าง AppRuntime (รวม capabilities ทั้งหมด)
+   ↓
+4. เรียก TodoService<M, RT> (Feature Layer)
+   ↓
+5. TodoService ใช้ Capabilities:
+   - Logger<M, RT>.logInfo(...)      ← เรียก capability
+   - Database<M, RT>.getTodoById(...) ← เรียก capability
+   - Time<M, RT>.UtcNow               ← เรียก capability
+   ↓
+6. Capability Module ขอ trait จาก Runtime:
+   - Has<M, RT, DatabaseIO>.ask      ← ได้ LiveDatabaseIO
+   ↓
+7. Live Implementation ทำงานจริง:
+   - LiveDatabaseIO.GetTodoById(...)  ← Query database
+   ↓
+8. ผลลัพธ์กลับขึ้นมาเป็น K<M, Todo>
+   ↓
+9. .RunAsync() รัน effect
+   ↓
+10. ได้ Fin<Todo> (Success หรือ Fail)
+   ↓
+11. ToResult() แปลงเป็น IResult
+   ↓
+12. ส่ง HTTP Response กลับ Client
+```
+
+**ทำไมต้องแบ่ง layers แบบนี้?**
+
+1. **Domain Layer** - Business entities (Todo)
+   - ไม่รู้จัก database, HTTP, หรือ framework ใดๆ
+   - Pure data structures
+   - Immutable (ใช้ record)
+
+2. **Infrastructure Layer** - Technical concerns
+   - **Traits** - กำหนดว่ามี operations อะไรบ้าง (interface)
+   - **Live** - Implementation จริงสำหรับ production
+   - **Capabilities** - API สำหรับใช้งาน traits (generic over M, RT)
+   - **Extensions** - Helper methods
+   - **AppRuntime** - รวม capabilities ทั้งหมดเข้าด้วยกัน
+
+3. **Feature Layer** - Business logic
+   - TodoService - orchestrate capabilities เพื่อทำงาน business logic
+   - TodoValidation - validation rules
+   - TodoDtos - data transfer objects
+
+4. **API Layer** - HTTP interface
+   - Program.cs - รับ HTTP requests, เรียก services, ส่ง responses
+
+**ข้อดีของการแบ่งแบบนี้:**
+
+✅ **Testability** - แต่ละ layer test ได้อิสระ
+- Domain → pure functions, ไม่ต้อง mock อะไร
+- Infrastructure → สร้าง Test implementations (TestDatabaseIO)
+- Feature → ใช้ TestRuntime แทน AppRuntime
+- API → integration tests
+
+✅ **Flexibility** - เปลี่ยน implementation ได้ง่าย
+- ใช้ LiveDatabaseIO ใน production
+- ใช้ TestDatabaseIO ใน tests
+- ใช้ InMemoryDatabaseIO ใน development
+
+✅ **Type Safety** - Compiler บังคับให้ระบุ capabilities
+- TodoService ต้องการ DatabaseIO, LoggerIO, TimeIO
+- Compiler เช็คว่า AppRuntime มี capabilities เหล่านี้
+- ถ้าขาด จะ compile error
+
+✅ **Maintainability** - โค้ดอ่านง่าย เข้าใจง่าย
+- แต่ละ file มี responsibility ชัดเจน
+- ไม่มี hidden dependencies
+- LINQ syntax อ่านเหมือนภาษาธรรมดา
+
 ---
 
 ## 5.2 Project Setup
@@ -193,7 +275,60 @@ public class AppDbContext : DbContext
 
 ## 5.4 Infrastructure Layer
 
+Infrastructure Layer คือ **หัวใจของ capability-based architecture** - ที่นี่เราจะสร้าง capabilities ทั้งหมดที่ application ต้องการ
+
+### ภาพรวม Infrastructure Layer
+
+**มี 3 ส่วนหลักสำหรับแต่ละ capability:**
+
+```
+DatabaseIO Capability:
+1. Trait (DatabaseIO.cs)          - Interface กำหนดว่ามี operations อะไร
+   ↓
+2. Live (LiveDatabaseIO.cs)       - Implementation จริงสำหรับ production
+   ↓
+3. Module (Database<M, RT>)       - API สำหรับใช้งาน capability
+```
+
+**ทำไมต้อง 3 ส่วน?**
+
+1. **Trait** - "What" (อะไร)
+   - กำหนดว่าต้องมี operations อะไรบ้าง
+   - เป็น interface ธรรมดา
+   - ไม่มี generic types (ใช้งานง่าย)
+
+2. **Live** - "How" (ทำอย่างไร)
+   - Implementation จริงสำหรับ production
+   - เชื่อมต่อกับ external systems (database, logger, etc.)
+   - มี side effects
+
+3. **Module** - "API" (ใช้งานอย่างไร)
+   - Generic over M (monad) และ RT (runtime)
+   - ให้ API แบบ functional (return K<M, A>)
+   - ห่อ side effects ด้วย M.LiftIO
+
+**ตัวอย่าง flow การทำงาน:**
+
+```csharp
+// 1. Service เรียกใช้ Capability Module
+from todo in Database<M, RT>.getTodoById(id)
+
+// 2. Module ขอ trait จาก Runtime
+from db in Has<M, RT, DatabaseIO>.ask  // ← ได้ LiveDatabaseIO
+
+// 3. Module เรียก trait method
+from result in M.LiftIO(IO.lift(_ => db.GetTodoById(id)))
+
+// 4. Live Implementation query database จริง
+var todo = dbContext.Todos.Find(id);
+return Optional(todo);
+
+// 5. ผลลัพธ์กลับขึ้นมาเป็น K<M, Option<Todo>>
+```
+
 ### 5.4.1 DatabaseIO Capability
+
+เริ่มจาก capability แรก - **DatabaseIO** สำหรับ database operations
 
 **Trait Interface:**
 
@@ -339,6 +474,57 @@ public static class Database<M, RT>
 
 ### 5.4.2 LoggerIO Capability
 
+**ทำไมต้องทำ Logger เป็น Capability?**
+
+หลายคนอาจสงสัยว่า "Logging ก็แค่ `Console.WriteLine` หรือ `_logger.LogInformation` ธรรมดา ทำไมต้องทำเป็น capability ด้วย?"
+
+**คำตอบ: Testability + Observability + Flexibility**
+
+✅ **1. Testability** - Test ได้ว่า service log อะไรบ้าง
+```csharp
+// ใน test สร้าง TestLoggerIO ที่เก็บ log messages
+public class TestLoggerIO : LoggerIO
+{
+    public List<string> Logs { get; } = new();
+    public Unit LogInfo(string message)
+    {
+        Logs.Add($"INFO: {message}");
+        return Unit.Default;
+    }
+}
+
+// Test ว่า service log ถูกต้อง
+var logger = new TestLoggerIO();
+var result = await TodoService<...>.Create(...);
+Assert.Contains("Creating todo:", logger.Logs[0]);
+```
+
+✅ **2. Flexibility** - เปลี่ยน logging backend ได้ง่าย
+- Production → `LiveLoggerIO` ใช้ `ILogger` ของ ASP.NET Core
+- Development → `ConsoleLoggerIO` log ลง console
+- Testing → `TestLoggerIO` เก็บ logs ใน memory
+- Disable → `NoOpLoggerIO` ไม่ log อะไรเลย
+
+✅ **3. Structured Logging** - Log พร้อม context
+```csharp
+// จาก:
+_logger.LogInfo($"Created todo ID: {id}");
+
+// เป็น:
+Logger<M, RT>.logInfo("Created todo {TodoId}", id);
+
+// ได้ structured log:
+// { "message": "Created todo 123", "TodoId": 123, "timestamp": "..." }
+```
+
+✅ **4. Composability** - Log เป็นส่วนหนึ่งของ effect chain
+```csharp
+from _ in Logger<M, RT>.logInfo("Starting operation")
+from result in DoSomething()
+from __ in Logger<M, RT>.logInfo("Operation completed")
+select result
+```
+
 **Trait Interface:**
 
 ```csharp
@@ -424,6 +610,79 @@ public static class Logger<M, RT>
 
 ### 5.4.3 TimeIO Capability
 
+**ทำไม DateTime.UtcNow ต้องเป็น Capability?**
+
+`DateTime.UtcNow` ดูเหมือน innocent value ธรรมดา แต่จริงๆมันคือ **side effect ที่แอบแฝง** (hidden side effect)!
+
+**ปัญหาของ DateTime.UtcNow:**
+
+❌ **1. Non-deterministic** - เรียกทีละครั้งได้ค่าต่างกัน
+```csharp
+var time1 = DateTime.UtcNow;
+Thread.Sleep(1000);
+var time2 = DateTime.UtcNow;
+// time1 != time2 → ไม่ใช่ pure function!
+```
+
+❌ **2. Untestable** - Test ยากมาก
+```csharp
+// ❌ Test นี้จะ fail บางครั้ง (flaky test)
+public void Should_Set_CreatedAt_To_Now()
+{
+    var todo = CreateTodo("Test");
+    var now = DateTime.UtcNow;
+    Assert.Equal(now, todo.CreatedAt);  // ← อาจต่างกัน 1-2 ms
+}
+```
+
+❌ **3. Time-dependent tests** - ต้อง mock time ยาก
+```csharp
+// ❌ Test business logic ที่ depend on time
+// "Todo ต้อง complete ภายใน 24 ชั่วโมง"
+// จะ test อย่างไร?
+```
+
+**✅ Solution: ทำ Time เป็น Capability**
+
+```csharp
+// Production: ใช้ LiveTimeIO (DateTime.UtcNow จริง)
+var runtime = new AppRuntime(services);
+
+// Testing: ใช้ TestTimeIO (เวลาที่เรากำหนด)
+public class TestTimeIO : TimeIO
+{
+    private DateTime _fixedTime;
+    public TestTimeIO(DateTime fixedTime) => _fixedTime = fixedTime;
+    public DateTime UtcNow() => _fixedTime;
+}
+
+// Test ได้แบบ deterministic!
+var testTime = new DateTime(2024, 1, 15, 10, 0, 0, DateTimeKind.Utc);
+var testRuntime = new TestRuntime(new TestTimeIO(testTime));
+
+var result = await TodoService<...>.Create(...);
+Assert.Equal(testTime, result.CreatedAt);  // ✅ Pass เสมอ
+```
+
+**✅ Benefits:**
+
+1. **Deterministic Tests** - เวลาคงที่ใน tests
+2. **Time Travel** - Test future/past scenarios ได้
+3. **Pure Functions** - Business logic ไม่ depend on hidden effects
+4. **Composable** - เป็นส่วนหนึ่งของ effect chain
+
+**ตัวอย่างการใช้งาน:**
+
+```csharp
+// Service ใช้ Time capability
+from now in Time<M, RT>.UtcNow
+from todo in M.Pure(new Todo
+{
+    CreatedAt = now,  // ← ได้จาก capability, ไม่ใช่ DateTime.UtcNow
+    ...
+})
+```
+
 **Trait Interface:**
 
 ```csharp
@@ -472,6 +731,46 @@ public static class Time<M, RT>
 
 ### 5.4.4 Extension Methods
 
+**ทำไมต้องมี Extension Methods .To<M, A>()?**
+
+ปัญหาที่พบบ่อยใน Functional Programming คือ **type mismatch** ระหว่าง:
+- `Option<A>` vs `K<M, A>`
+- `Validation<Error, A>` vs `K<M, A>`
+- `Either<L, R>` vs `K<M, A>`
+
+**ปัญหา: ไม่สามารถ compose กันได้โดยตรง**
+
+```csharp
+// ❌ Compile error!
+public static K<M, Todo> Get(int id)
+{
+    return
+        from todoOpt in Database<M, RT>.getTodoById(id)  // ← Return K<M, Option<Todo>>
+        from todo in todoOpt  // ← ❌ Option<Todo> ไม่ใช่ K<M, Todo>
+        select todo;
+}
+```
+
+**❌ วิธีแก้แบบเก่า: ใช้ Match + Throw**
+
+```csharp
+from todoOpt in Database<M, RT>.getTodoById(id)
+from todo in M.Pure(todoOpt.Match(
+    Some: t => t,
+    None: () => throw new Exception("Not found")  // ❌ Throw exception!
+))
+```
+
+**Problems:**
+1. ❌ ใช้ exceptions (ไม่ functional)
+2. ❌ Error ไม่ type-safe
+3. ❌ ทำลาย referential transparency
+4. ❌ โค้ดอ่านยาก
+
+**✅ Solution: Extension Method .To<M, A>()**
+
+Extension method ที่แปลง `Option<A>` → `K<M, A>` แบบ **type-safe และ purely functional**!
+
 **OptionExtensions:**
 
 ```csharp
@@ -505,6 +804,31 @@ public static class OptionExtensions
 }
 ```
 
+**การใช้งาน OptionExtensions:**
+
+```csharp
+// ✅ สะอาด type-safe ไม่มี exceptions
+public static K<M, Todo> Get(int id)
+{
+    return
+        from todoOpt in Database<M, RT>.getTodoById(id)  // K<M, Option<Todo>>
+        from todo in todoOpt.To<M, Todo>(() =>
+            Error.New(404, $"Todo {id} not found"))      // ← แปลงเป็น K<M, Todo>
+        select todo;
+}
+
+// เมื่อ todoOpt = Some(todo) → return M.Pure(todo)
+// เมื่อ todoOpt = None        → return M.Fail(Error.New(...))
+```
+
+**Benefits:**
+
+✅ **1. Type-safe** - Errors เป็น `Error` type ไม่ใช่ exceptions
+✅ **2. Composable** - ใช้ใน LINQ query ได้เลย
+✅ **3. Purely functional** - ไม่มี side effects
+✅ **4. Explicit** - Error message ชัดเจน
+✅ **5. Testable** - Test ได้ง่ายว่า return error อะไร
+
 **ValidationExtensions:**
 
 ```csharp
@@ -529,7 +853,97 @@ public static class ValidationExtensions
 }
 ```
 
+**การใช้งาน ValidationExtensions:**
+
+```csharp
+// ✅ แปลง Validation → K<M, A> แบบ seamless
+public static K<M, Todo> Create(string title, string? description)
+{
+    return
+        from now in Time<M, RT>.UtcNow
+        from newTodo in M.Pure(new Todo { Title = title, ... })
+        from validated in TodoValidation.Validate(newTodo).To<M, Todo>()  // ← แปลง!
+        from saved in Database<M, RT>.addTodo(validated)
+        select saved;
+}
+
+// เมื่อ validation สำเร็จ → M.Pure(todo)
+// เมื่อ validation ล้มเหลว → M.Fail(error)
+```
+
+**ทำไมต้องมีทั้ง OptionExtensions และ ValidationExtensions?**
+
+แต่ละตัวจัดการ error cases ที่ต่างกัน:
+
+- **OptionExtensions** - สำหรับ **"ไม่พบข้อมูล"** (404 Not Found)
+  - `Option<Todo>` → `K<M, Todo>`
+  - Use case: Query database, ไม่เจอ = None
+
+- **ValidationExtensions** - สำหรับ **"ข้อมูลไม่ถูกต้อง"** (400 Bad Request)
+  - `Validation<Error, Todo>` → `K<M, Todo>`
+  - Use case: Validate input, ผิด = Fail(errors)
+
+```csharp
+// ตัวอย่างการใช้ร่วมกัน
+public static K<M, Todo> Update(int id, string title, string? description)
+{
+    return
+        // 1. เช็คว่ามี todo ไหม (OptionExtensions)
+        from existing in Get(id)  // ← ใช้ .To<M, Todo>() สำหรับ Option
+
+        // 2. สร้าง updated todo
+        from updated in M.Pure(existing with { Title = title, ... })
+
+        // 3. Validate (ValidationExtensions)
+        from validated in TodoValidation.Validate(updated).To<M, Todo>()  // ← สำหรับ Validation
+
+        // 4. Save
+        from saved in Database<M, RT>.updateTodo(validated)
+        select saved;
+}
+```
+
 ### 5.4.5 AppRuntime
+
+**AppRuntime คือศูนย์กลางของ Capabilities**
+
+`AppRuntime` เป็น record ที่:
+1. **เก็บ dependencies** (IServiceProvider)
+2. **Implement Has<M, T>** สำหรับทุก capability
+3. **Return Live implementations** เมื่อ service ขอ capability
+
+**การทำงานของ AppRuntime:**
+
+```csharp
+// 1. Service ขอ DatabaseIO
+from db in Has<Eff<AppRuntime>, AppRuntime, DatabaseIO>.ask
+
+// 2. AppRuntime.Ask ถูกเรียก
+static K<Eff<AppRuntime>, DatabaseIO> Has<Eff<AppRuntime>, DatabaseIO>.Ask =>
+    liftEff((Func<AppRuntime, DatabaseIO>)(rt =>
+        new LiveDatabaseIO(rt.Services)));  // ← สร้าง LiveDatabaseIO
+
+// 3. Service ได้ DatabaseIO (จริงๆคือ LiveDatabaseIO)
+// 4. Service เรียก db.GetTodoById(...)
+// 5. LiveDatabaseIO query database จริง
+```
+
+**ทำไมต้องใช้ liftEff?**
+
+`liftEff` = "ยก function ธรรมดาเป็น effect"
+
+```csharp
+// ฟังก์ชันธรรมดา: AppRuntime → DatabaseIO
+(AppRuntime rt) => new LiveDatabaseIO(rt.Services)
+
+// ยกขึ้นเป็น effect: K<Eff<AppRuntime>, DatabaseIO>
+liftEff((Func<AppRuntime, DatabaseIO>)(rt => new LiveDatabaseIO(rt.Services)))
+```
+
+เมื่อ effect นี้ถูก run (`RunAsync`), มันจะ:
+1. รับ `AppRuntime` เป็น parameter
+2. เรียกฟังก์ชัน
+3. Return `LiveDatabaseIO` instance
 
 ```csharp
 // Infrastructure/AppRuntime.cs
@@ -570,6 +984,45 @@ public record AppRuntime(IServiceProvider Services) :
 ---
 
 ## 5.5 Feature Layer
+
+**Feature Layer คือที่รวม Business Logic ทั้งหมด**
+
+Feature Layer ประกอบด้วย 3 ส่วนหลัก:
+
+**1. TodoService** - Business logic / Use cases
+- Orchestrate capabilities เพื่อทำงานที่ต้องการ
+- Generic over `M` (monad) และ `RT` (runtime)
+- ใช้ LINQ query syntax เพื่อ compose effects
+- ไม่รู้จัก implementation details (database, HTTP, etc.)
+
+**2. TodoValidation** - Validation rules
+- Domain-specific validation rules
+- Use **Applicative validation** (รวบรวม errors ทั้งหมด)
+- Return `Validation<Error, A>` แล้วใช้ `.To<M, A>()` แปลงเป็น effect
+
+**3. TodoDtos** - Data Transfer Objects
+- Request DTOs (CreateTodoRequest, UpdateTodoRequest)
+- Response DTOs (TodoResponse)
+- แยกจาก Domain entities (Todo)
+
+**ทำไมต้องแยก?**
+
+✅ **1. Single Responsibility**
+- TodoService = business logic
+- TodoValidation = validation rules
+- TodoDtos = API contracts
+
+✅ **2. Testability**
+- Test validation rules แยกจาก service
+- Test service โดยไม่ต้อง setup HTTP
+
+✅ **3. Reusability**
+- Validation rules ใช้ได้ทั้ง Create และ Update
+- DTOs ใช้ได้กับหลาย endpoints
+
+✅ **4. Maintainability**
+- เปลี่ยน validation rules ที่เดียว
+- DTO changes ไม่กระทบ domain
 
 ### 5.5.1 TodoValidation
 
@@ -640,6 +1093,76 @@ public record TodoResponse(
 ```
 
 ### 5.5.3 TodoService
+
+**TodoService - Business Logic ที่เป็น Pure Functional**
+
+`TodoService<M, RT>` คือ static class ที่รวม **use cases ทั้งหมด** ของ Todo feature:
+- List all todos
+- Get single todo
+- Create new todo
+- Update existing todo
+- Toggle completion status
+- Delete todo
+
+**Key Design Principles:**
+
+✅ **1. Generic over M and RT**
+```csharp
+public static class TodoService<M, RT>
+    where M : Monad<M>, MonadIO<M>, Fallible<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>, Has<M, TimeIO>
+```
+- `M` = Monad type (เช่น `Eff<AppRuntime>`)
+- `RT` = Runtime type ที่มี capabilities ที่ต้องการ
+- Compiler บังคับให้ RT มีครบทุก capability
+
+✅ **2. Pure Functions (ส่วนใหญ่)**
+- ไม่มี mutable state
+- ไม่ throw exceptions
+- Return `K<M, A>` (effect description)
+- Side effects อยู่ใน capabilities เท่านั้น
+
+✅ **3. Declarative Style**
+- ใช้ LINQ query syntax
+- อ่านเหมือนภาษาธรรมดา
+- Compose effects แบบ step-by-step
+
+✅ **4. Error Handling แบบ Type-safe**
+- ไม่ใช้ try-catch
+- Errors เป็น `Error` type
+- Use `.To<M, A>()` สำหรับ Option/Validation
+
+**ตัวอย่างการทำงาน:**
+
+```csharp
+// Use case: Get todo by ID
+public static K<M, Todo> Get(int id)
+{
+    // Step 1: Log ว่ากำลังทำอะไร
+    from _ in Logger<M, RT>.logInfo($"Getting todo {id}")
+
+    // Step 2: Query database
+    from todoOpt in Database<M, RT>.getTodoById(id)  // K<M, Option<Todo>>
+
+    // Step 3: Handle not found (Option → K<M, A>)
+    from todo in todoOpt.To<M, Todo>(() =>
+        Error.New(404, $"Todo {id} not found"))      // ← Type-safe error!
+
+    // Step 4: Log success
+    from __ in Logger<M, RT>.logInfo($"Found todo: {todo.Title}")
+
+    // Step 5: Return result
+    select todo;
+}
+```
+
+**Benefits of This Approach:**
+
+✅ **Testable** - ใช้ TestRuntime แทน AppRuntime
+✅ **Composable** - Combine effects ได้ง่าย
+✅ **Readable** - อ่านเหมือน step-by-step instructions
+✅ **Type-safe** - Compiler เช็คว่ามี capabilities ครบ
+✅ **Maintainable** - แก้ไขง่าย เพิ่ม features ง่าย
 
 ```csharp
 // Features/Todos/TodoService.cs
@@ -729,6 +1252,84 @@ public static class TodoService<M, RT>
 ---
 
 ## 5.6 API Layer
+
+**API Layer เชื่อมโลก HTTP กับโลก Functional**
+
+API Layer (Program.cs) มีหน้าที่:
+
+**1. รับ HTTP Requests**
+- Parse request body (JSON → DTOs)
+- Extract route parameters (id, query params)
+- Get CancellationToken
+
+**2. สร้าง AppRuntime**
+- สร้าง runtime ที่มี capabilities ทั้งหมด
+- ส่ง IServiceProvider เข้าไป (สำหรับ DbContext, Logger)
+
+**3. เรียก TodoService**
+- ส่ง parameters เข้าไปใน service method
+- Get effect description กลับมา (K<M, A>)
+
+**4. Run Effect**
+- เรียก `.RunAsync(runtime, envIO)` เพื่อรัน effect
+- ได้ `Fin<A>` กลับมา (Success หรือ Fail)
+
+**5. แปลง Fin<A> → HTTP Response**
+- Success → 200 OK, 201 Created, 204 No Content
+- Fail → 404 Not Found, 500 Internal Server Error
+
+**Helper: ToResult<A>**
+
+`ToResult` คือ helper function ที่แปลง `Fin<A>` → `IResult`:
+
+```csharp
+static IResult ToResult<A>(Fin<A> result, Func<A, IResult> onSuccess) =>
+    result.Match(
+        Succ: onSuccess,                    // ← Success: ให้ caller กำหนด response
+        Fail: error =>                      // ← Fail: แปลงเป็น Problem Details
+        {
+            var code = error.Code == 404 ? 404 : 500;
+            return Results.Problem(
+                detail: error.Message,
+                statusCode: code);
+        }
+    );
+```
+
+**ทำไมต้องมี ToResult?**
+
+✅ **1. Reusability** - ใช้ได้กับทุก endpoint
+✅ **2. Consistency** - Error response format เหมือนกันทุก endpoint
+✅ **3. Type-safety** - Compile-time checking
+✅ **4. Separation** - แยก error handling ออกจาก endpoint logic
+
+**Endpoint Pattern:**
+
+ทุก endpoint ทำ 4 ขั้นตอนเดียวกัน:
+
+```csharp
+app.MapGet("/todos/{id:int}", async (
+    int id,                              // 1. รับ parameters
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    var runtime = new AppRuntime(services);  // 2. สร้าง runtime
+
+    var result = await TodoService<Eff<AppRuntime>, AppRuntime>
+        .Get(id)                             // 3. เรียก service
+        .RunAsync(runtime, EnvIO.New(ct));   // 4. รัน effect
+
+    return ToResult(result, todo =>          // 5. แปลง → HTTP response
+        Results.Ok(MapToResponse(todo)));
+});
+```
+
+**Benefits:**
+
+✅ **Predictable** - ทุก endpoint ทำแบบเดียวกัน
+✅ **Testable** - แยก test API layer กับ service layer ได้
+✅ **Type-safe** - Compiler เช็ค type ตลอด
+✅ **Maintainable** - แก้ไข pattern ที่เดียว ใช้ได้ทุกที่
 
 ### 5.6.1 Program.cs - Setup
 
