@@ -206,31 +206,63 @@ var result =
 
 #### 4. **Type Safety** - ความปลอดภัยจากระบบ Type
 
-```typescript
+**ตัวอย่าง Backend (C# + language-ext):**
+
+```csharp
 // ❌ Runtime Error - ไม่รู้ว่า user อาจเป็น null
-async function getUserName(userId: number): Promise<string> {
-  const user = await db.users.findById(userId);
-  return user.name;  // 💥 Runtime error ถ้า user เป็น null!
+public async Task<string> GetUserName(int userId)
+{
+    var user = await dbContext.Users.FindAsync(userId);
+    return user.Name;  // 💥 NullReferenceException ถ้า user เป็น null!
 }
 
 // ✅ Type-Safe with Option - คอมไพเลอร์บังคับให้ handle
-async function getUserName(userId: number): Promise<Option<string>> {
-  const user = await db.users.findById(userId);
-  return Optional(user).map(u => u.name);
+public async Task<Option<string>> GetUserName(int userId)
+{
+    var user = await dbContext.Users.FindAsync(userId);
+    return Optional(user).Map(u => u.Name);
 }
 
-// ใช้งาน - คอมไพเลอร์บังคับให้จัดการทุก case
-const nameOpt = await getUserName(1);
-nameOpt.match({
-  some: (name) => console.log(`Hello ${name}`),
-  none: () => console.log("User not found")  // ต้องจัดการ case นี้ด้วย!
-});
+// ใช้งาน - ต้องจัดการทุก case
+var nameOpt = await GetUserName(1);
+var message = nameOpt.Match(
+    Some: name => $"Hello {name}",
+    None: () => "User not found"  // บังคับให้จัดการ case นี้!
+);
+```
+
+**ตัวอย่าง Frontend (TypeScript + Effect-TS):**
+
+```typescript
+// ❌ Runtime Error - ไม่รู้ว่าอาจ fail
+async function getUserName(userId: number): Promise<string> {
+  const response = await fetch(`/api/users/${userId}`);
+  const user = await response.json();
+  return user.name;  // 💥 อาจ crash ถ้า response ไม่สำเร็จ!
+}
+
+// ✅ Type-Safe with Effect - คอมไพเลอร์บังคับให้ handle errors
+function getUserName(userId: number): Effect.Effect<string, Error> {
+  return Effect.gen(function* (_) {
+    const client = yield* _(HttpClientService);
+    const user = yield* _(client.get<User>(`/api/users/${userId}`));
+    return user.name;
+  });
+}
+
+// ใช้งาน - ต้องจัดการ success และ error
+const result = await Effect.runPromiseExit(getUserName(1));
+if (Exit.isSuccess(result)) {
+  console.log(`Hello ${result.value}`);
+} else {
+  console.log("User not found");  // จัดการ error case
+}
 ```
 
 **ข้อดีของ Type Safety:**
-- คอมไพเลอร์บังคับให้ handle ทุก case (ไม่มี null pointer exception)
-- ไม่สามารถเข้าถึง `user.name` โดยตรงถ้า user อาจเป็น null
-- Refactor ง่าย - ถ้าเปลี่ยน type คอมไพเลอร์จะบอกว่าต้องแก้ที่ไหนบ้าง
+- **Compile-time checking** - คอมไพเลอร์บังคับให้ handle ทุก case (Success/Failure)
+- **ไม่มี null pointer exception** - type system ป้องกันตั้งแต่ compile-time
+- **Refactor ปลอดภัย** - เปลี่ยน type แค่ที่ไหน คอมไพเลอร์จะบอกว่าต้องแก้ที่ไหนบ้าง
 
 ---
 
