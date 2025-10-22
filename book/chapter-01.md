@@ -155,6 +155,8 @@ const { state, refetch } = useAppQuery(env, listTodos(), []);
 
 #### 1. **Pure Functions** - ฟังก์ชันบริสุทธิ์
 
+**ตัวอย่าง (TypeScript):**
+
 ```typescript
 // ❌ Impure - มี side effects
 let counter = 0;
@@ -176,6 +178,8 @@ function increment(counter: number): number {
 
 #### 2. **Immutability** - ไม่เปลี่ยนแปลงข้อมูล
 
+**ตัวอย่าง (C#):**
+
 ```csharp
 // ❌ Mutable
 var todo = new Todo { Title = "Buy milk" };
@@ -187,6 +191,8 @@ var updated = todo with { Title = "Buy eggs" };  // สร้าง object ใ�
 ```
 
 #### 3. **Composition** - การประกอบฟังก์ชัน
+
+**ตัวอย่าง (C#):**
 
 ```csharp
 // แทนที่จะเขียน:
@@ -367,7 +373,7 @@ if (Exit.isSuccess(result)) {
 
 #### ❌ Before (Imperative)
 
-**Backend:**
+**Backend (C#):**
 ```csharp
 public async Task<IActionResult> CreateTodo(CreateTodoRequest request)
 {
@@ -398,7 +404,7 @@ public async Task<IActionResult> CreateTodo(CreateTodoRequest request)
 }
 ```
 
-**Frontend:**
+**Frontend (TypeScript):**
 ```typescript
 const [loading, setLoading] = useState(false);
 const [error, setError] = useState<string | null>(null);
@@ -449,7 +455,7 @@ const handleSubmit = async (e) => {
 
 #### ✅ After (Functional)
 
-**Backend:**
+**Backend (C# + language-ext):**
 ```csharp
 public static K<M, Todo> Create<M, RT>(string title, string description)
     where M : Monad<M>, MonadIO<M>, Fallible<M>
@@ -471,7 +477,7 @@ public static K<M, Todo> Create<M, RT>(string title, string description)
 }
 ```
 
-**Frontend:**
+**Frontend (TypeScript + Effect-TS):**
 ```typescript
 export const createTodo = (request: CreateTodoRequest): App<Todo> =>
   Effect.gen(function* (_) {
