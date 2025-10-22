@@ -1325,7 +1325,7 @@ K<IO, A>                  .RunSafe()                       →      Fin<A>
                           .RunSafeAsync(EnvIO)             →      ValueTask<Fin<A>>
                           ✅  Type-safe error handling
 
-K<Eff<RT>, A>             .RunAsync(RT runtime, EnvIO)     →      Fin<A>
+K<Eff<RT>, A>             .RunAsync(RT runtime, EnvIO)     →      Task<Fin<A>>
                           ✅  Type-safe error handling (always)
 
 Description               Execute                                 Result
@@ -1903,8 +1903,10 @@ Fin<A>                 → Result จาก Eff effect ที่รันแล�
 ```
 Effect Description (ยังไม่รัน)
 ├─ IO<A>              → .Run() → A (throws exception ❌)
-├─ Eff<RT, A>         → .RunAsync(RT, EnvIO) → Fin<A> (type-safe ✅)
-└─ K<Eff<RT>, A>      → .RunAsync(RT, EnvIO) → Fin<A> (type-safe ✅)
+├─ IO<A>              → .RunSafe() → Fin<A> (type-safe ✅)
+├─ IO<A>              → .RunSafeAsync() → ValueTask<Fin<A>> (type-safe ✅)
+├─ Eff<RT, A>         → .RunAsync(RT, EnvIO) → Task<Fin<A>> (type-safe ✅)
+└─ K<Eff<RT>, A>      → .RunAsync(RT, EnvIO) → Task<Fin<A>> (type-safe ✅)
 
 Pure Computation (ไม่มี side effects)
 ├─ Option<T>          → Match/Bind/Map
