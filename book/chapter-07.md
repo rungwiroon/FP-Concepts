@@ -1089,7 +1089,368 @@ public class PropertyTests
 }
 ```
 
-### 7.4.3 Testing Option Properties
+**ทำไมต้องใช้ Property-Based Testing?**
+
+**Example-based testing มีข้อจำกัด:**
+```csharp
+// ❌ Test เฉพาะ cases ที่เราคิดได้
+[Test]
+public void Discount_Should_Calculate_Correctly()
+{
+    Assert.That(CalculateDiscount(100, 10), Is.EqualTo(90));
+    Assert.That(CalculateDiscount(50, 5), Is.EqualTo(47.5));
+    Assert.That(CalculateDiscount(0, 10), Is.EqualTo(0));
+
+    // แต่ถ้ามี bug กับ input อื่นล่ะ?
+    // เช่น negative numbers, very large numbers, edge cases?
+}
+```
+
+**Property-based testing ครอบคลุมกว่า:**
+```csharp
+// ✅ Test ทุก cases ที่เป็นไปได้ (100 random cases)
+[Property]
+public Property Discount_Should_Never_Be_Negative(decimal price, decimal discountPercent)
+{
+    // Property: ราคาหลัง discount ต้องไม่ติดลบ
+    var result = CalculateDiscount(price, discountPercent);
+    return (result >= 0).ToProperty();
+
+    // FsCheck จะ generate:
+    // - price = 100, discount = 50
+    // - price = 0.5, discount = 99.9
+    // - price = 1000000, discount = 0.1
+    // - price = -10, discount = 20  ← Edge case!
+    // ... และอีก 96 cases
+}
+```
+
+### 7.4.3 Business Case Examples
+
+**Case 1: E-commerce - Shopping Cart**
+
+```csharp
+// Domain
+public record CartItem(int ProductId, decimal Price, int Quantity);
+
+public static class ShoppingCart
+{
+    public static decimal CalculateTotal(List<CartItem> items) =>
+        items.Sum(i => i.Price * i.Quantity);
+
+    public static decimal ApplyDiscount(decimal total, decimal discountPercent) =>
+        total * (1 - discountPercent / 100);
+}
+
+// Property Tests
+[TestFixture]
+public class ShoppingCartPropertyTests
+{
+    [Property]
+    public Property Total_Should_Never_Be_Negative(decimal price, int quantity)
+    {
+        // Arrange
+        var validPrice = Math.Abs(price);
+        var validQuantity = Math.Abs(quantity);
+        var items = new List<CartItem>
+        {
+            new(1, validPrice, validQuantity)
+        };
+
+        // Act
+        var total = ShoppingCart.CalculateTotal(items);
+
+        // Assert - Property: total ต้องไม่ติดลบ
+        return (total >= 0).ToProperty();
+    }
+
+    [Property]
+    public Property Empty_Cart_Has_Zero_Total()
+    {
+        var total = ShoppingCart.CalculateTotal(new List<CartItem>());
+        return (total == 0).ToProperty();
+    }
+
+    [Property]
+    public Property Adding_Item_Increases_Total(
+        decimal price1, int qty1,
+        decimal price2, int qty2)
+    {
+        // Arrange
+        var p1 = Math.Abs(price1);
+        var p2 = Math.Abs(price2);
+        var q1 = Math.Max(1, Math.Abs(qty1));
+        var q2 = Math.Max(1, Math.Abs(qty2));
+
+        var cart1 = new List<CartItem> { new(1, p1, q1) };
+        var cart2 = new List<CartItem>
+        {
+            new(1, p1, q1),
+            new(2, p2, q2)
+        };
+
+        // Property: cart ที่มีสินค้ามากกว่า ต้องมีราคามากกว่า
+        var total1 = ShoppingCart.CalculateTotal(cart1);
+        var total2 = ShoppingCart.CalculateTotal(cart2);
+
+        return (total2 >= total1).ToProperty();
+    }
+
+    [Property]
+    public Property Discount_Should_Reduce_Price(decimal total, decimal discount)
+    {
+        // Arrange
+        var validTotal = Math.Abs(total);
+        var validDiscount = Math.Abs(discount) % 100;  // 0-99%
+
+        // Act
+        var discounted = ShoppingCart.ApplyDiscount(validTotal, validDiscount);
+
+        // Property: ราคาหลัง discount ต้อง <= ราคาเดิม
+        return (discounted <= validTotal).ToProperty();
+    }
+
+    [Property]
+    public Property Discount_100_Percent_Should_Be_Zero(decimal total)
+    {
+        var validTotal = Math.Abs(total);
+        var discounted = ShoppingCart.ApplyDiscount(validTotal, 100);
+
+        // Property: discount 100% = ฟรี
+        return (Math.Abs(discounted) < 0.01m).ToProperty();  // Allow floating point error
+    }
+}
+```
+
+**Case 2: Financial - Money Operations**
+
+```csharp
+// Domain
+public record Money(decimal Amount, string Currency);
+
+public static class MoneyOperations
+{
+    public static Money Add(Money a, Money b)
+    {
+        if (a.Currency != b.Currency)
+            throw new InvalidOperationException("Cannot add different currencies");
+
+        return new Money(a.Amount + b.Amount, a.Currency);
+    }
+
+    public static Money Multiply(Money money, decimal multiplier) =>
+        new Money(money.Amount * multiplier, money.Currency);
+}
+
+// Property Tests
+[TestFixture]
+public class MoneyPropertyTests
+{
+    [Property]
+    public Property Addition_Is_Commutative(decimal amount1, decimal amount2)
+    {
+        // Property: a + b == b + a
+        var money1 = new Money(amount1, "THB");
+        var money2 = new Money(amount2, "THB");
+
+        var sum1 = MoneyOperations.Add(money1, money2);
+        var sum2 = MoneyOperations.Add(money2, money1);
+
+        return (sum1.Amount == sum2.Amount).ToProperty();
+    }
+
+    [Property]
+    public Property Multiplication_By_Zero_Is_Zero(decimal amount)
+    {
+        // Property: x * 0 = 0
+        var money = new Money(amount, "THB");
+        var result = MoneyOperations.Multiply(money, 0);
+
+        return (result.Amount == 0).ToProperty();
+    }
+
+    [Property]
+    public Property Multiplication_By_One_Is_Identity(decimal amount)
+    {
+        // Property: x * 1 = x
+        var money = new Money(amount, "THB");
+        var result = MoneyOperations.Multiply(money, 1);
+
+        return (result.Amount == money.Amount).ToProperty();
+    }
+
+    [Property]
+    public Property Addition_Should_Fail_For_Different_Currencies()
+    {
+        // Property: ห้ามบวกเงินต่างสกุล
+        var thb = new Money(100, "THB");
+        var usd = new Money(100, "USD");
+
+        try
+        {
+            MoneyOperations.Add(thb, usd);
+            return false.ToProperty();  // Should have thrown
+        }
+        catch (InvalidOperationException)
+        {
+            return true.ToProperty();   // Correct behavior
+        }
+    }
+}
+```
+
+**Case 3: Booking System - Date Ranges**
+
+```csharp
+// Domain
+public record DateRange(DateTime Start, DateTime End)
+{
+    public bool Overlaps(DateRange other)
+    {
+        return Start < other.End && End > other.Start;
+    }
+
+    public int GetDurationDays()
+    {
+        return (End - Start).Days;
+    }
+}
+
+// Property Tests
+[TestFixture]
+public class BookingPropertyTests
+{
+    [Property]
+    public Property Duration_Should_Always_Be_Positive(DateTime start)
+    {
+        // Property: ระยะเวลาต้องเป็นบวก (End > Start)
+        var end = start.AddDays(new Random().Next(1, 365));
+        var range = new DateRange(start, end);
+
+        var duration = range.GetDurationDays();
+        return (duration >= 0).ToProperty();
+    }
+
+    [Property]
+    public Property Overlap_Is_Symmetric(
+        DateTime start1, DateTime start2)
+    {
+        // Property: ถ้า A overlaps B → B overlaps A
+        var end1 = start1.AddDays(5);
+        var end2 = start2.AddDays(5);
+
+        var range1 = new DateRange(start1, end1);
+        var range2 = new DateRange(start2, end2);
+
+        var overlaps1 = range1.Overlaps(range2);
+        var overlaps2 = range2.Overlaps(range1);
+
+        return (overlaps1 == overlaps2).ToProperty();
+    }
+
+    [Property]
+    public Property Range_Should_Overlap_With_Itself(DateTime start)
+    {
+        // Property: date range ต้อง overlap กับตัวเอง
+        var end = start.AddDays(5);
+        var range = new DateRange(start, end);
+
+        return range.Overlaps(range).ToProperty();
+    }
+
+    [Property]
+    public Property Non_Overlapping_Ranges_Have_Gap(
+        DateTime start1)
+    {
+        // Property: ถ้าไม่ overlap → ต้องมีช่องว่างระหว่างกัน
+        var end1 = start1.AddDays(5);
+        var start2 = end1.AddDays(10);  // Gap of 10 days
+        var end2 = start2.AddDays(5);
+
+        var range1 = new DateRange(start1, end1);
+        var range2 = new DateRange(start2, end2);
+
+        var overlaps = range1.Overlaps(range2);
+        var hasGap = start2 > end1;
+
+        return (!overlaps && hasGap).ToProperty();
+    }
+}
+```
+
+**Case 4: API - Serialization Round-Trip**
+
+```csharp
+// Domain
+public record TodoDto(int Id, string Title, string? Description, bool IsCompleted);
+
+// Property Tests
+[TestFixture]
+public class SerializationPropertyTests
+{
+    [Property]
+    public Property Serialization_RoundTrip_Preserves_Data(
+        int id, string title, bool isCompleted)
+    {
+        // Property: Serialize → Deserialize → ได้ข้อมูลเดิม
+        var original = new TodoDto(id, title, null, isCompleted);
+
+        // Serialize
+        var json = JsonSerializer.Serialize(original);
+
+        // Deserialize
+        var deserialized = JsonSerializer.Deserialize<TodoDto>(json);
+
+        // Property: ต้องได้ข้อมูลเดิม
+        return (deserialized?.Id == original.Id &&
+                deserialized?.Title == original.Title &&
+                deserialized?.IsCompleted == original.IsCompleted)
+            .ToProperty();
+    }
+
+    [Property]
+    public Property Serialization_Should_Handle_Special_Characters(string title)
+    {
+        // Property: ต้อง handle special characters ได้
+        var todo = new TodoDto(1, title, null, false);
+
+        try
+        {
+            var json = JsonSerializer.Serialize(todo);
+            var deserialized = JsonSerializer.Deserialize<TodoDto>(json);
+
+            return (deserialized?.Title == title).ToProperty();
+        }
+        catch
+        {
+            return false.ToProperty();  // Should not throw
+        }
+    }
+}
+```
+
+**ข้อดีของ Property-Based Testing ใน Business Cases:**
+
+✅ **ค้นพบ Edge Cases** - FsCheck generate cases ที่เราอาจไม่คิดถึง
+✅ **Prevent Regressions** - ถ้า property ผ่านแล้ว จะผ่านตลอด
+✅ **Living Documentation** - Properties อธิบาย business rules
+✅ **Confidence** - Test 100 cases แทน 3-5 cases
+✅ **Catch Bugs Early** - พบ bugs ก่อนขึ้น production
+
+**เมื่อไหร่ควรใช้?**
+
+✅ **ใช้ Property-Based Testing เมื่อ:**
+- Business logic ที่มี mathematical properties ชัดเจน
+- Operations ที่ต้อง commutative, associative
+- Round-trip operations (serialize/deserialize, encode/decode)
+- Invariants ที่ต้องเป็นจริงเสมอ (เช่น ราคาไม่ติดลบ)
+
+❌ **ไม่เหมาะกับ:**
+- Business logic ที่ซับซ้อนเฉพาะเจาะจง
+- UI testing
+- Integration testing กับ external services
+
+### 7.4.4 Testing Option Properties
 
 ```csharp
 [TestFixture]
