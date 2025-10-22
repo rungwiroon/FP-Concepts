@@ -375,12 +375,14 @@ using System.Collections.Immutable;
 var list1 = ImmutableList.Create(1, 2, 3);
 
 // การเปลี่ยนแปลง = คืน list ใหม่
-var list2 = list1.Add(4);
-var list3 = list2.Remove(2);
+var list2 = list1.Add(4);                    // เพิ่มท้าย list
+var list3 = list2.Remove(2);                 // ลบตัวเลข 2 ออก (by value)
+var list4 = list2.RemoveAt(1);               // ลบ index ที่ 1 ออก (by index)
 
 Console.WriteLine(list1.Count);  // 3 - ไม่เปลี่ยน
-Console.WriteLine(list2.Count);  // 4
-Console.WriteLine(list3.Count);  // 3
+Console.WriteLine(list2.Count);  // 4 → [1, 2, 3, 4]
+Console.WriteLine(list3.Count);  // 3 → [1, 3, 4]
+Console.WriteLine(list4.Count);  // 3 → [1, 3, 4]
 ```
 
 **TypeScript - Array Methods:**
@@ -414,15 +416,16 @@ var list1 = ImmutableList.Create(1, 2, 3);
 var list2 = list1.Add(4);  // แชร์ nodes เดิม + เพิ่ม path ใหม่
 
 // Time complexity:
-// Add (append): O(log n) - สร้าง path ใหม่ตามความสูงของ tree
-// Get by index: O(log n) - traverse tree
-// Remove by index: O(log n) - สร้าง tree ใหม่โดยแชร์ส่วนที่ไม่เปลี่ยน
-// Remove by value: O(n) - ต้องค้นหาก่อนว่า value อยู่ที่ไหน!
+// Add(item): O(log n) - สร้าง path ใหม่ตามความสูงของ tree
+// Get[index]: O(log n) - traverse tree ตาม index
+// RemoveAt(index): O(log n) - รู้ตำแหน่งแล้ว ลบแล้วสร้าง tree ใหม่
+// Remove(value): O(n) - ต้องค้นหาก่อนว่า value อยู่ที่ไหน + ลบ
 
 // เทียบกับ List<T> ธรรมดา:
-// Add: O(1) amortized (เร็วกว่า)
-// Get by index: O(1) (เร็วกว่า)
-// Remove: O(n) (ช้าพอๆ กัน)
+// Add: O(1) amortized (เร็วกว่า ImmutableList)
+// Get[index]: O(1) (เร็วกว่า ImmutableList)
+// RemoveAt: O(n) (ช้ากว่า ImmutableList เพราะต้อง shift elements)
+// Remove(value): O(n) (ช้าพอๆ กัน)
 ```
 
 **Structural Sharing แบบ Manual (TypeScript):**
