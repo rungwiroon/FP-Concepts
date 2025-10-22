@@ -427,9 +427,11 @@ using K = LanguageExt.K;
 // Infrastructure/Traits/ConsoleIO.cs
 namespace TodoApp.Infrastructure.Traits;
 
+using LanguageExt;
+
 public interface ConsoleIO
 {
-    void WriteLine(string message);
+    Unit WriteLine(string message);  // Return Unit แทน void
     string ReadLine();
 }
 ```
@@ -440,13 +442,15 @@ public interface ConsoleIO
 // Infrastructure/Live/LiveConsoleIO.cs
 namespace TodoApp.Infrastructure.Live;
 
+using LanguageExt;
 using TodoApp.Infrastructure.Traits;
 
 public class LiveConsoleIO : ConsoleIO
 {
-    public void WriteLine(string message)
+    public Unit WriteLine(string message)
     {
         Console.WriteLine(message);
+        return Unit.Default;  // Return Unit
     }
 
     public string ReadLine()
@@ -470,14 +474,10 @@ public static class ConsoleCapability<M, RT>
     where M : Monad<M>
     where RT : Has<M, ConsoleIO>
 {
+    // ง่ายมาก! เพราะ WriteLine return Unit แล้ว
     public static K<M, Unit> writeLine(string message) =>
         from console in Has<M, RT, ConsoleIO>.ask
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            console.WriteLine(message);
-            return Unit.Default;
-        })
-        select result;
+        select console.WriteLine(message);
 
     public static K<M, string> readLine() =>
         from console in Has<M, RT, ConsoleIO>.ask
@@ -579,7 +579,8 @@ public interface ConsoleIO
 - ✅ ใช้ชื่อที่สื่อความหมาย เช่น `DatabaseIO`, `LoggerIO`, `ConsoleIO`
 - ✅ Method ควรเป็น synchronous (async จะอยู่ใน capability module)
 - ✅ ไม่ควรมี implementation logic
-- ✅ Return type ควรเป็น primitive หรือ domain types
+- ✅ Return type ควรเป็น primitive, domain types, หรือ **Unit** (แทน void)
+- ✅ **สำคัญ!** ใช้ `Unit` แทน `void` เพื่อให้ compose ใน LINQ ได้ง่าย
 
 ### 3.7.2 Live Implementation - การทำงานจริง
 
@@ -613,14 +614,10 @@ public static class ConsoleCapability<M, RT>
     where M : Monad<M>
     where RT : Has<M, ConsoleIO>
 {
+    // ง่ายมาก! เพราะ WriteLine return Unit แล้ว
     public static K<M, Unit> writeLine(string message) =>
         from console in Has<M, RT, ConsoleIO>.ask  // ✅ 3 params, lowercase
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            console.WriteLine(message);
-            return Unit.Default;
-        })
-        select result;
+        select console.WriteLine(message);  // ✅ ไม่ต้องห่อด้วย M.Pure
 }
 ```
 
@@ -631,7 +628,8 @@ public static class ConsoleCapability<M, RT>
 - ✅ Constrain `RT : Has<M, TraitType>`
 - ✅ Methods return `K<M, A>` (monadic values)
 - ✅ ใช้ `Has<M, RT, T>.ask` (3 params, lowercase) เพื่อขอ capability
-- ✅ ห่อ side effects ด้วย `M.Pure` หรือ `M.LiftIO`
+- ✅ ถ้า trait method return Unit ไม่ต้องห่อด้วย `M.Pure` - แค่ `select` ได้เลย!
+- ✅ ถ้า trait method ต้อง async ใช้ `M.LiftIO`
 
 ### 3.7.4 Runtime - รวม Capabilities
 
@@ -750,14 +748,10 @@ public static class Logger<M, RT>
     where M : Monad<M>
     where RT : Has<M, LoggerIO>
 {
+    // ง่ายมาก! ถ้า LogInfo return Unit
     public static K<M, Unit> logInfo(string message) =>
         from logger in Has<M, RT, LoggerIO>.ask
-        from result in M.Pure(Unit.Default).Map(_ =>
-        {
-            logger.LogInfo(message);
-            return Unit.Default;
-        })
-        select result;
+        select logger.LogInfo(message);
 }
 ```
 
