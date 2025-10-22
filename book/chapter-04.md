@@ -633,44 +633,118 @@ public static K<M, List<Todo>> GetMultiple<M, RT>(
 
 ### 4.6.1 Optional Capabilities
 
-บางครั้งต้องการ capability ที่อาจมีหรือไม่มีก็ได้:
+บางครั้งต้องการ capability ที่ optional - **แต่ไม่ควรใช้ reflection!**
+
+**❌ แนวทางที่ผิด - ใช้ Reflection (ช้า!)**
 
 ```csharp
-// Optional metrics - มีก็ดี ไม่มีก็ไม่เป็นไร
-public static K<M, Todo> CreateWithOptionalMetrics<M, RT>(
-    string title,
-    string description)
+// ❌ อย่าทำแบบนี้ - reflection มี overhead สูงมาก!
+if (typeof(RT).GetInterfaces().Any(i =>
+    i.IsGenericType &&
+    i.GetGenericTypeDefinition() == typeof(Has<,>) &&
+    i.GetGenericArguments()[1] == typeof(MetricsIO)))
+{
+    return Metrics<M, RT>.increment("todos_created");
+}
+```
+
+**ทำไมไม่ดี?**
+- ❌ Reflection calls หนัก (GetInterfaces, GetGenericTypeDefinition)
+- ❌ Runtime checking แทน compile-time
+- ❌ ขัดกับ zero-cost abstraction principle
+- ❌ ไม่ type-safe
+
+**✅ แนวทางที่ถูก - ใช้ NoOp Implementation**
+
+**Approach 1: NoOp Capability (แนะนำ)**
+
+```csharp
+// สร้าง NoOp implementation
+public class NoOpMetricsIO : MetricsIO
+{
+    public Unit Increment(string metric) => Unit.Default;
+    public Unit Gauge(string metric, double value) => Unit.Default;
+    public Unit Timing(string metric, TimeSpan duration) => Unit.Default;
+}
+
+// Production runtime - มี metrics
+public record ProductionRuntime :
+    Has<Eff<ProductionRuntime>, DatabaseIO>,
+    Has<Eff<ProductionRuntime>, LoggerIO>,
+    Has<Eff<ProductionRuntime>, MetricsIO>  // ✅ มี MetricsIO
+{
+    static K<Eff<ProductionRuntime>, MetricsIO> Has<Eff<ProductionRuntime>, MetricsIO>.Ask =>
+        liftEff((Func<ProductionRuntime, MetricsIO>)(rt =>
+            new LiveMetricsIO(rt.Services)));
+}
+
+// Development runtime - ไม่มี metrics จริง แต่ให้ NoOp
+public record DevRuntime :
+    Has<Eff<DevRuntime>, DatabaseIO>,
+    Has<Eff<DevRuntime>, LoggerIO>,
+    Has<Eff<DevRuntime>, MetricsIO>  // ✅ ยังมี MetricsIO (แต่เป็น NoOp)
+{
+    static K<Eff<DevRuntime>, MetricsIO> Has<Eff<DevRuntime>, MetricsIO>.Ask =>
+        liftEff((Func<DevRuntime, MetricsIO>)(_ =>
+            new NoOpMetricsIO()));  // ✅ NoOp - ไม่ทำอะไร
+}
+
+// Service code - เขียนได้เหมือนเดิม!
+public static K<M, Todo> Create<M, RT>(string title, string description)
     where M : Monad<M>, MonadIO<M>, Fallible<M>
-    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>
+    where RT : Has<M, DatabaseIO>,
+               Has<M, LoggerIO>,
+               Has<M, MetricsIO>  // ✅ ต้องมี MetricsIO เสมอ
 {
     return
         from _ in Logger<M, RT>.logInfo("Creating todo")
         from todo in CreateTodoCore(title, description)
-
-        // Try to increment metrics, but don't fail if not available
-        from __ in TryIncrementMetrics<M, RT>(todo)
-
+        from __ in Metrics<M, RT>.increment("todos_created")  // ✅ Type-safe!
         select todo;
-}
-
-private static K<M, Unit> TryIncrementMetrics<M, RT>(Todo todo)
-    where M : Monad<M>, Fallible<M>
-{
-    // Check if RT has MetricsIO
-    if (typeof(RT).GetInterfaces().Any(i =>
-        i.IsGenericType &&
-        i.GetGenericTypeDefinition() == typeof(Has<,>) &&
-        i.GetGenericArguments()[1] == typeof(MetricsIO)))
-    {
-        return Metrics<M, RT>.increment("todos_created");
-    }
-
-    // No metrics available - just return success
-    return M.Pure(Unit.Default);
 }
 ```
 
-**หมายเหตุ:** Pattern นี้ใช้ reflection ดังนั้นมี performance overhead
+**ข้อดี:**
+- ✅ Zero-cost - ไม่มี reflection
+- ✅ Type-safe - compile time checking
+- ✅ NoOp implementation compile away (optimizer ลบออก)
+- ✅ เขียน code ได้แบบเดียวกันทุก environment
+
+**Approach 2: Separate Service Variants**
+
+```csharp
+// Service หลัก - ไม่มี metrics
+public static class TodoServiceCore<M, RT>
+    where M : Monad<M>, MonadIO<M>, Fallible<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>
+{
+    public static K<M, Todo> Create(string title, string description) =>
+        from _ in Logger<M, RT>.logInfo("Creating todo")
+        from todo in CreateTodoCore(title, description)
+        select todo;
+}
+
+// Service variant - มี metrics
+public static class TodoServiceWithMetrics<M, RT>
+    where M : Monad<M>, MonadIO<M>, Fallible<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>, Has<M, MetricsIO>
+{
+    public static K<M, Todo> Create(string title, string description) =>
+        from todo in TodoServiceCore<M, RT>.Create(title, description)
+        from _ in Metrics<M, RT>.increment("todos_created")
+        select todo;
+}
+```
+
+**ข้อดี:**
+- ✅ แยก concerns ชัดเจน
+- ✅ ไม่ซ้ำซ้อน code (reuse core service)
+- ✅ Type-safe
+
+**ข้อเสีย:**
+- ❌ ต้องมี 2 versions
+
+**สรุป:** ใช้ **NoOp pattern** เป็น default - type-safe และไม่มี overhead!
 
 ### 4.6.2 Scoped Capabilities
 
