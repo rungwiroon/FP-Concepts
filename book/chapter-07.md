@@ -1039,20 +1039,125 @@ public class TodoServiceTests
 
 ### 7.4.1 Property-Based Testing คืออะไร?
 
-**Example-based testing:**
+**Testing แบบปกติที่เราคุ้นเคย:**
+
+เมื่อเราเขียน tests ปกติ เรามักเขียนแบบ **"Example-based testing"** คือ:
+1. คิด test cases เอง
+2. เขียน input และ expected output เฉพาะเจาะจง
+3. Run test ดูว่า output ตรงกับที่คาดหวังไหม
+
+**ตัวอย่าง Example-based testing:**
+
 ```csharp
-// ✅ Test specific examples
-Assert.That(Add(2, 3), Is.EqualTo(5));
-Assert.That(Add(0, 0), Is.EqualTo(0));
-Assert.That(Add(-1, 1), Is.EqualTo(0));
+// เรากำลัง test ฟังก์ชัน Add
+public static int Add(int a, int b) => a + b;
+
+// เขียน test โดยคิด examples เอง
+[Test]
+public void Add_Should_Work_Correctly()
+{
+    // Example 1: 2 + 3 = 5
+    Assert.That(Add(2, 3), Is.EqualTo(5));
+
+    // Example 2: 0 + 0 = 0
+    Assert.That(Add(0, 0), Is.EqualTo(0));
+
+    // Example 3: -1 + 1 = 0
+    Assert.That(Add(-1, 1), Is.EqualTo(0));
+
+    // ✅ ถ้า 3 tests นี้ผ่าน → เราคิดว่าฟังก์ชันถูก
+}
 ```
 
-**Property-based testing:**
+**ปัญหาของ Example-based testing:**
+
+❌ **เรา test เฉพาะ cases ที่คิดออก** - แล้วถ้ามี bug กับ input อื่นล่ะ?
+- ถ้า `Add(1000000, 1000000)` จะเป็นไง?
+- ถ้า `Add(int.MaxValue, 1)` overflow หรือเปล่า?
+- ถ้า `Add(-999, -1)` จะถูกไหม?
+
+❌ **ต้องคิด test cases เยอะมาก** - ถึงจะครอบคลุม edge cases
+❌ **อาจพลาด edge cases** ที่ไม่เคยคิดถึง
+
+---
+
+**Property-Based Testing คืออะไร?**
+
+แทนที่จะ test **examples เฉพาะ** เราจะ test **properties** (คุณสมบัติ) ที่**ต้องเป็นจริงเสมอ ไม่ว่า input จะเป็นอะไรก็ตาม**
+
+**แนวคิด:**
+> "ฟังก์ชัน Add ไม่ว่าจะรับ input อะไร มันควรมีคุณสมบัติอะไรบ้าง?"
+
+**Properties ของฟังก์ชัน Add:**
+
 ```csharp
-// ✅ Test properties that should hold for ALL inputs
-Property: ∀ a, b: Add(a, b) == Add(b, a)  // Commutative
-Property: ∀ a: Add(a, 0) == a             // Identity
-Property: ∀ a, b, c: Add(Add(a, b), c) == Add(a, Add(b, c))  // Associative
+// Property 1: Commutative (สลับที่ได้)
+// ∀ a, b: Add(a, b) == Add(b, a)
+// "ไม่ว่า a, b จะเป็นเลขอะไร การบวกสลับที่ได้"
+// 2 + 3 == 3 + 2
+// 100 + 50 == 50 + 100
+// -5 + 10 == 10 + (-5)
+
+// Property 2: Identity (บวก 0 = ตัวเอง)
+// ∀ a: Add(a, 0) == a
+// "ไม่ว่า a จะเป็นเลขอะไร บวก 0 แล้วได้ตัวเอง"
+// 5 + 0 == 5
+// -10 + 0 == -10
+// 1000000 + 0 == 1000000
+
+// Property 3: Associative (จัดกลุ่มได้)
+// ∀ a, b, c: Add(Add(a, b), c) == Add(a, Add(b, c))
+// "ไม่ว่า a, b, c จะเป็นเลขอะไร การบวกจัดกลุ่มไหนก็ได้ผลเหมือนกัน"
+// (1 + 2) + 3 == 1 + (2 + 3)
+// (10 + 20) + 30 == 10 + (20 + 30)
+```
+
+**ข้อดีของ Property-Based Testing:**
+
+✅ **ไม่ต้องคิด test cases เอง** - เครื่องมือจะ generate ให้อัตโนมัติ
+✅ **Test ครอบคลุมกว่า** - generate 100 random test cases แทน 3-5 cases
+✅ **ค้นพบ edge cases** ที่เราไม่เคยคิดถึง
+✅ **เป็น documentation** - Properties อธิบาย business rules ได้ดี
+
+---
+
+**เปรียบเทียบ Example-based vs Property-based:**
+
+| Aspect | Example-based | Property-based |
+|--------|---------------|----------------|
+| **Test cases** | คิดเอง 3-5 cases | Generate อัตโนมัติ 100 cases |
+| **Coverage** | เฉพาะ cases ที่คิดออก | Random cases รวม edge cases |
+| **Maintenance** | ต้อง update test cases | Update properties เท่านั้น |
+| **Documentation** | Examples บอก "อะไร" | Properties บอก "ทำไม" |
+
+**ตัวอย่างเปรียบเทียบ:**
+
+```csharp
+// ❌ Example-based - ต้องคิด cases เอง
+[Test]
+public void Add_Examples()
+{
+    Assert.That(Add(2, 3), Is.EqualTo(5));
+    Assert.That(Add(0, 0), Is.EqualTo(0));
+    Assert.That(Add(-1, 1), Is.EqualTo(0));
+    // แล้วถ้า Add(999, 1) ล่ะ? หรือ Add(-500, -300)?
+}
+
+// ✅ Property-based - test ทุก cases อัตโนมัติ
+[Property]
+public Property Add_Is_Commutative(int a, int b)
+{
+    // FsCheck จะ generate:
+    // a=2, b=3
+    // a=0, b=0
+    // a=-1, b=1
+    // a=999, b=1
+    // a=-500, b=-300
+    // a=int.MaxValue, b=1
+    // ... และอีก 94 cases!
+
+    return (Add(a, b) == Add(b, a)).ToProperty();
+}
 ```
 
 ### 7.4.2 FsCheck - Property Testing for .NET
