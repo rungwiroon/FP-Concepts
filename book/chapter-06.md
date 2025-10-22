@@ -1311,15 +1311,79 @@ var result = await GetTodo(123).RunAsync(runtime, envIO);
 **Relationship: Effect → Run → Result**
 
 ```
-Effect Types              Run                 Result Type
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IO<A>                     .Run()       →      A
-Eff<RT, A>                .Run(RT)     →      A
-K<Eff<RT>, A>             .RunAsync()  →      Fin<A>
+Effect Types              Run Method                              Result Type
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IO<A>                     .Run()                           →      A
+                          .Run(EnvIO)                      →      A
+                          .RunAsync()                      →      ValueTask<A>
+                          .RunAsync(EnvIO)                 →      ValueTask<A>
+                          ⚠️  Throws exception on failure
 
-Description               Execute             Result
-(ยังไม่รัน)                (รันจริง)           (ผลลัพธ์)
+K<Eff<RT>, A>             .RunAsync(RT runtime, EnvIO)     →      Fin<A>
+                          ✅  Type-safe error handling
+
+Description               Execute                                 Result
+(ยังไม่รัน)                (รันจริง)                               (ผลลัพธ์)
 ```
+
+**ความแตกต่างสำคัญ:**
+
+**IO\<A\> - Throws Exceptions ❌**
+```csharp
+using LanguageExt;
+
+IO<int> divide = IO.lift(() => 10 / 0);
+
+try
+{
+    int result = divide.Run();  // ← Throws DivideByZeroException!
+}
+catch (DivideByZeroException ex)
+{
+    // ❌ ต้องใช้ try-catch - ไม่ type-safe
+    Console.WriteLine("Error!");
+}
+
+// RunAsync ก็เหมือนกัน - throws exception
+try
+{
+    int result = await divide.RunAsync();  // ← Throws!
+}
+catch (DivideByZeroException ex)
+{
+    Console.WriteLine("Error!");
+}
+```
+
+**Eff\<RT, A\> / K\<Eff\<RT\>, A\> - Type-safe ✅**
+```csharp
+using LanguageExt;
+using LanguageExt.Effects;
+
+// Effect ที่อาจล้มเหลว
+K<Eff<Runtime>, int> divide =
+    from result in Eff<Runtime, int>(rt => 10 / 0)
+    select result;
+
+// Run → ได้ Fin<int> ไม่ throw exception
+var runtime = new Runtime();
+Fin<int> result = await divide.RunAsync(runtime, EnvIO.New());
+
+// ✅ Pattern matching - type-safe!
+var message = result.Match(
+    Succ: value => $"Result: {value}",
+    Fail: error => $"Error: {error.Message}"  // ← ได้ "Error: ..."
+);
+
+// ไม่ต้อง try-catch!
+```
+
+**ทำไมเราใช้ Eff แทน IO?**
+
+✅ **Type-safe error handling** - ไม่ throw exceptions
+✅ **Compiler enforcement** - ต้อง handle Fin\<A\>
+✅ **Composable** - Chain effects โดยไม่ต้อง try-catch
+✅ **Testable** - Error cases เป็น values ธรรมดา
 
 ### 6.5.2 Fin\<A\> - Result Type
 
@@ -1754,9 +1818,10 @@ public Either<Error, Result> DoSomething()
 2. **Option\<T\>** - สำหรับค่าที่อาจไม่มี (optional values)
 3. **Either\<L, R\>** - สำหรับ operations ที่อาจล้มเหลว พร้อม error details
 4. **Validation\<Error, A\>** - สำหรับรวบรวม errors หลายตัว (form validation)
-5. **Fin\<A\>** - Result จากการรัน effects
-6. **Validation Patterns** - Field-level, Combinator, Cross-field, Domain-driven
-7. **Best Practices** - เลือก type ให้เหมาะสม, error messages ที่ดี, logging
+5. **IO\<A\> และ Eff\<RT, A\>** - Effect types สำหรับอธิบาย side effects
+6. **Fin\<A\>** - Result จากการรัน Eff effects (type-safe)
+7. **Validation Patterns** - Field-level, Combinator, Cross-field, Domain-driven
+8. **Best Practices** - เลือก type ให้เหมาะสม, error messages ที่ดี, logging
 
 ### Error Type Decision Guide
 
@@ -1764,7 +1829,23 @@ public Either<Error, Result> DoSomething()
 Option<T>              → ไม่มี error details, แค่ "มี/ไม่มี"
 Either<L, R>           → มี error details, หยุดที่ error แรก
 Validation<Error, A>   → รวบรวม errors ทั้งหมด
-Fin<A>                 → Result จาก effect ที่รันแล้ว
+IO<A>                  → Effect ที่ throws exceptions (ไม่แนะนำ)
+Eff<RT, A>             → Effect ที่ type-safe
+Fin<A>                 → Result จาก Eff effect ที่รันแล้ว
+```
+
+### Effect System Summary
+
+```
+Effect Description (ยังไม่รัน)
+├─ IO<A>              → .Run() → A (throws exception ❌)
+├─ Eff<RT, A>         → .RunAsync(RT, EnvIO) → Fin<A> (type-safe ✅)
+└─ K<Eff<RT>, A>      → .RunAsync(RT, EnvIO) → Fin<A> (type-safe ✅)
+
+Pure Computation (ไม่มี side effects)
+├─ Option<T>          → Match/Bind/Map
+├─ Either<L, R>       → Match/Bind/Map
+└─ Validation<E, A>   → Match/Apply
 ```
 
 ### Key Takeaways
