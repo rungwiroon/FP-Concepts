@@ -207,24 +207,30 @@ var result =
 #### 4. **Type Safety** - ความปลอดภัยจากระบบ Type
 
 ```typescript
-// ❌ Runtime Error
-function divide(a, b) {
-  return a / b;  // ถ้า b = 0 จะได้ Infinity
+// ❌ Runtime Error - ไม่รู้ว่า user อาจเป็น null
+async function getUserName(userId: number): Promise<string> {
+  const user = await db.users.findById(userId);
+  return user.name;  // 💥 Runtime error ถ้า user เป็น null!
 }
 
-// ✅ Type-Safe with Option
-function divide(a: number, b: number): Option<number> {
-  return b === 0
-    ? Option.none()
-    : Option.some(a / b);
+// ✅ Type-Safe with Option - คอมไพเลอร์บังคับให้ handle
+async function getUserName(userId: number): Promise<Option<string>> {
+  const user = await db.users.findById(userId);
+  return Optional(user).map(u => u.name);
 }
 
-// ใช้งาน
-divide(10, 2).match({
-  some: (result) => console.log(result),  // 5
-  none: () => console.log("Cannot divide by zero")
+// ใช้งาน - คอมไพเลอร์บังคับให้จัดการทุก case
+const nameOpt = await getUserName(1);
+nameOpt.match({
+  some: (name) => console.log(`Hello ${name}`),
+  none: () => console.log("User not found")  // ต้องจัดการ case นี้ด้วย!
 });
 ```
+
+**ข้อดีของ Type Safety:**
+- คอมไพเลอร์บังคับให้ handle ทุก case (ไม่มี null pointer exception)
+- ไม่สามารถเข้าถึง `user.name` โดยตรงถ้า user อาจเป็น null
+- Refactor ง่าย - ถ้าเปลี่ยน type คอมไพเลอร์จะบอกว่าต้องแก้ที่ไหนบ้าง
 
 ---
 
