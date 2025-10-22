@@ -1198,22 +1198,144 @@ select result;
 
 ---
 
-## 6.5 Fin\<A\> - สำหรับ Fallible Effects
+## 6.5 IO/Eff Monads และ Fin\<A\>
 
-### 6.5.1 Fin\<A\> คืออะไร?
+### 6.5.1 Effect Types: IO\<A\> และ Eff\<RT, A\>
 
-**Fin\<A\>** (Finish) คือ result type ที่ได้จากการรัน effect ใน language-ext v5:
+ก่อนจะพูดถึง **Fin\<A\>** (result type) เราต้องเข้าใจ **Effect types** ก่อน
+
+**Effect = คำอธิบายของงานที่ต้องทำ ไม่ใช่การทำจริง**
+
+**ใน C# language-ext v5 มี effect types 2 ตัว:**
+
+**1. IO\<A\>** - Effect ที่ไม่ต้องการ dependencies
+
+```csharp
+using LanguageExt;
+
+// IO<A> = Effect ที่จะได้ค่า A เมื่อรัน
+IO<string> readLine = IO.lift(() => Console.ReadLine()!);
+IO<Unit> writeLine = IO.lift(() =>
+{
+    Console.WriteLine("Hello");
+    return Unit.Default;
+});
+
+// ⚠️ ยังไม่ได้รันจริง! แค่สร้าง description ของ effect
+// เปรียบเทียบ: เหมือนสูตรอาหาร ไม่ใช่อาหารจริง
+```
+
+**2. Eff\<RT, A\>** - Effect ที่ต้องการ runtime (capabilities)
+
+```csharp
+// Eff<RT, A> = Effect ที่ต้องการ runtime RT และจะได้ค่า A
+public static K<M, Todo> GetTodo<M, RT>(int id)
+    where M : Monad<M>, MonadIO<M>, Fallible<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>
+{
+    return
+        from _ in Logger<M, RT>.logInfo($"Getting todo {id}")
+        from todoOpt in Database<M, RT>.getTodoById(id)
+        from todo in todoOpt.To<M, Todo>($"Todo {id} not found")
+        select todo;
+
+    // ⚠️ ยังไม่ได้รันจริง!
+    // แค่ return K<M, Todo> ซึ่งเป็น description ของ effect
+}
+
+// ใน TodoService เราใช้:
+// - M = Eff<AppRuntime>
+// - RT = AppRuntime
+// ดังนั้น K<M, Todo> จริงๆคือ K<Eff<AppRuntime>, Todo>
+```
+
+**ทำไมต้องแยก Effect กับ Result?**
+
+✅ **1. Lazy Evaluation** - ไม่รันจนกว่าจะเรียก `.RunAsync()`
+
+```csharp
+// สร้าง effect - ไม่ได้ query database!
+var effect = TodoService<Eff<AppRuntime>, AppRuntime>.Get(123);
+
+// ถ้าไม่เรียก RunAsync() → ไม่มีอะไรเกิดขึ้น
+// เหมือนสูตรที่ยังไม่ทำตาม
+
+// รันจริง - ตอนนี้ถึงจะ query database
+var result = await effect.RunAsync(runtime, envIO);
+```
+
+✅ **2. Composability** - Compose effects ก่อนรัน
+
+```csharp
+// สร้าง effects หลายตัว
+var effect1 = GetUser(userId);
+var effect2 = GetOrder(orderId);
+
+// Compose เข้าด้วยกัน - ยังไม่รัน
+var combinedEffect =
+    from user in effect1
+    from order in effect2
+    select (user, order);
+
+// รันครั้งเดียว - efficient!
+var result = await combinedEffect.RunAsync(runtime, envIO);
+```
+
+✅ **3. Testability** - เปลี่ยน runtime ได้ง่าย
+
+```csharp
+// Production - ใช้ AppRuntime
+var productionResult = await effect.RunAsync(
+    new AppRuntime(services),
+    EnvIO.New(ct)
+);
+
+// Testing - ใช้ TestRuntime
+var testResult = await effect.RunAsync(
+    new TestRuntime(),
+    EnvIO.New(CancellationToken.None)
+);
+```
+
+✅ **4. Pure Functions** - Effect description คือ pure value
+
+```csharp
+// ✅ Function นี้ pure - ไม่มี side effects
+// return ค่าเดียวกันเสมอสำหรับ input เดียวกัน
+public static K<M, Todo> GetTodo<M, RT>(int id) { ... }
+
+// Side effects เกิดตอนรัน .RunAsync() เท่านั้น
+var result = await GetTodo(123).RunAsync(runtime, envIO);
+```
+
+**Relationship: Effect → Run → Result**
+
+```
+Effect Types              Run                 Result Type
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IO<A>                     .Run()       →      A
+Eff<RT, A>                .Run(RT)     →      A
+K<Eff<RT>, A>             .RunAsync()  →      Fin<A>
+
+Description               Execute             Result
+(ยังไม่รัน)                (รันจริง)           (ผลลัพธ์)
+```
+
+### 6.5.2 Fin\<A\> - Result Type
+
+**Fin\<A\>** (Finish) คือ **result type ที่ได้จากการรัน effect**:
 
 ```csharp
 // Fin<A> มี 2 cases:
 // - Succ(value) - สำเร็จ
 // - Fail(error) - ล้มเหลว พร้อม Error
 
-// รัน effect ได้ Fin<A>
+// สร้าง effect (description)
+var effect = TodoService<Eff<AppRuntime>, AppRuntime>.Get(id);
+
+// รัน effect → ได้ Fin<A>
 var runtime = new AppRuntime(services);
-Fin<Todo> result = await TodoService<Eff<AppRuntime>, AppRuntime>
-    .Get(id)
-    .RunAsync(runtime, EnvIO.New(ct));
+Fin<Todo> result = await effect.RunAsync(runtime, EnvIO.New(ct));
 
 // Pattern matching
 var response = result.Match(
@@ -1222,7 +1344,34 @@ var response = result.Match(
 );
 ```
 
-### 6.5.2 Fin\<A\> vs Either\<L, R\>
+**Complete Example: Effect → Run → Fin**
+
+```csharp
+// 1. สร้าง effect (K<M, Todo>)
+var getTodoEffect = TodoService<Eff<AppRuntime>, AppRuntime>.Get(123);
+// ⚠️ ยังไม่ได้ query database!
+
+// 2. Compose effects
+var updateEffect =
+    from todo in getTodoEffect                           // K<M, Todo>
+    from updated in M.Pure(todo with { Title = "New" })  // K<M, Todo>
+    from saved in Database<M, RT>.updateTodo(updated)    // K<M, Todo>
+    select saved;
+// ⚠️ ยังไม่ได้ทำอะไรจริง!
+
+// 3. รัน effect → ได้ Fin<Todo>
+var runtime = new AppRuntime(services);
+Fin<Todo> result = await updateEffect.RunAsync(runtime, EnvIO.New(ct));
+// ✅ ตอนนี้ถึงรันจริง!
+
+// 4. Handle result
+var response = result.Match(
+    Succ: todo => Results.Ok(todo),
+    Fail: error => Results.Problem(error.Message)
+);
+```
+
+### 6.5.3 Fin\<A\> vs Either\<L, R\>
 
 | Aspect | Fin\<A\> | Either\<L, R\> |
 |--------|---------|--------------|
@@ -1231,22 +1380,49 @@ var response = result.Match(
 | **When** | หลัง `.RunAsync()` | ก่อนรัน effect |
 | **Purpose** | Runtime result | Compile-time safety |
 
-**ตัวอย่าง:**
+**สรุปความสัมพันธ์:**
 
-```csharp
-// Either - ก่อนรัน effect (compile-time)
-public static K<M, Todo> Create(string title, string? description)
-{
-    // return K<M, Todo> - description ของ effect
-    // ยังไม่ได้รัน, ยังไม่รู้ว่าจะสำเร็จหรือไม่
-}
+```
+Pure Computation (Either)        Effect System (IO/Eff)           Runtime Result (Fin)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Either<string, int>              IO<int>                          Fin<int>
+↓                                ↓                                ↓
+Validation logic                 Effect description               Actual result
+No side effects                  Lazy (not executed yet)          Eager (executed)
+Compile-time                     Compose before run               Runtime
 
-// Fin - หลังรัน effect (runtime)
-var result = await TodoService.Create("Test", null).RunAsync(...);
-// result: Fin<Todo> - รันแล้ว รู้แล้วว่าสำเร็จหรือล้มเหลว
+ParseInt("42")                   TodoService.Get(123)             await effect.RunAsync(...)
+→ Right(42)                      → K<M, Todo> (description)       → Fin<Todo> (result)
 ```
 
-### 6.5.3 Working with Fin\<A\>
+**ตัวอย่างการใช้ร่วมกัน:**
+
+```csharp
+// 1. Either - Pure validation
+Either<string, int> ParseId(string input) =>
+    int.TryParse(input, out var id) && id > 0
+        ? Right<string, int>(id)
+        : Left<string, int>("Invalid ID");
+
+// 2. Effect - Build effect description
+K<M, Todo> GetTodoEffect(int id) =>
+    TodoService<Eff<AppRuntime>, AppRuntime>.Get(id);
+
+// 3. Combine - Validate then build effect
+Either<string, K<M, Todo>> ValidateAndBuildEffect(string input) =>
+    ParseId(input)
+        .Map(id => GetTodoEffect(id));
+
+// 4. Run effect - Get Fin result
+var validationResult = ValidateAndBuildEffect("123");
+var finalResult = await validationResult.Match(
+    Left: error => Task.FromResult(Fin<Todo>.Fail(Error.New(error))),
+    Right: effect => effect.RunAsync(runtime, envIO)
+);
+// finalResult: Fin<Todo>
+```
+
+### 6.5.4 Working with Fin\<A\>
 
 **Match - Handle both cases**
 
