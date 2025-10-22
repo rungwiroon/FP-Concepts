@@ -325,17 +325,77 @@ public class TodosTitleContainsSpec(string searchTerm) : Specification<Todo>
 
 /// <summary>
 /// Specification for high-priority todos (example with complex logic).
+/// ✅ Pure - no side effects. Time is injected via constructor.
 /// </summary>
 public class HighPriorityTodoSpec : Specification<Todo>
 {
+    private readonly DateTime _asOfDate;
+
+    public HighPriorityTodoSpec(DateTime asOfDate)
+    {
+        _asOfDate = asOfDate;
+    }
+
     public override Expression<Func<Todo, bool>> ToExpression()
     {
-        // Example: High priority = incomplete AND created more than 7 days ago
-        var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+        // High priority = incomplete AND created more than 7 days ago
+        var sevenDaysAgo = _asOfDate.AddDays(-7);
         return todo => !todo.IsCompleted && todo.CreatedAt < sevenDaysAgo;
     }
 }
+
+// Usage in service:
+// from now in Time<M, RT>.UtcNow
+// from spec in M.Pure(new HighPriorityTodoSpec(now))
+// from todos in TodoRepository<M, RT>.find(spec)
+// select todos;
 ```
+
+**⚠️ Important: Keeping Specifications Pure**
+
+Specifications must be **pure functions** - no side effects, no hidden dependencies:
+
+```csharp
+// ❌ BAD - Contains side effect (DateTime.UtcNow)
+public class RecentTodosSpec : Specification<Todo>
+{
+    public override Expression<Func<Todo, bool>> ToExpression()
+    {
+        var yesterday = DateTime.UtcNow.AddDays(-1);  // ❌ Impure!
+        return todo => todo.CreatedAt > yesterday;
+    }
+}
+
+// ✅ GOOD - Pure, time injected via constructor
+public class RecentTodosSpec : Specification<Todo>
+{
+    private readonly DateTime _asOfDate;
+
+    public RecentTodosSpec(DateTime asOfDate)
+    {
+        _asOfDate = asOfDate;
+    }
+
+    public override Expression<Func<Todo, bool>> ToExpression()
+    {
+        var yesterday = _asOfDate.AddDays(-1);
+        return todo => todo.CreatedAt > yesterday;
+    }
+}
+
+// Usage - inject time from TimeIO trait:
+from now in Time<M, RT>.UtcNow
+from spec in M.Pure(new RecentTodosSpec(now))
+from todos in TodoRepository<M, RT>.find(spec)
+select todos;
+```
+
+**Why purity matters:**
+- ✅ **Testable** - Can control time in tests with TestTimeIO
+- ✅ **Deterministic** - Same inputs always produce same results
+- ✅ **Cacheable** - Expression trees are stable
+- ✅ **Composable** - Can safely combine specifications
+- ✅ **No hidden dependencies** - All dependencies are explicit
 
 ### Step 3: Update Repository Interface
 
