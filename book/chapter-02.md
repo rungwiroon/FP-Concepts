@@ -408,13 +408,21 @@ numbers.splice(1, 1); // แก้ array เดิม
 
 **Structural Sharing (C#):**
 ```csharp
-// ImmutableList ใช้ tree structure
-// การ Add(4) ไม่ได้ copy ทั้ง list
+// ImmutableList ใช้ AVL tree (balanced tree)
+// ไม่ได้ copy ทั้ง list แต่แชร์ส่วนที่ไม่เปลี่ยน
 var list1 = ImmutableList.Create(1, 2, 3);
-var list2 = list1.Add(4);  // แชร์ nodes เดิม + เพิ่ม node ใหม่
+var list2 = list1.Add(4);  // แชร์ nodes เดิม + เพิ่ม path ใหม่
 
 // Time complexity:
-// Add/Remove: O(log n) แทนที่จะเป็น O(n)
+// Add (append): O(log n) - สร้าง path ใหม่ตามความสูงของ tree
+// Get by index: O(log n) - traverse tree
+// Remove by index: O(log n) - สร้าง tree ใหม่โดยแชร์ส่วนที่ไม่เปลี่ยน
+// Remove by value: O(n) - ต้องค้นหาก่อนว่า value อยู่ที่ไหน!
+
+// เทียบกับ List<T> ธรรมดา:
+// Add: O(1) amortized (เร็วกว่า)
+// Get by index: O(1) (เร็วกว่า)
+// Remove: O(n) (ช้าพอๆ กัน)
 ```
 
 **Structural Sharing แบบ Manual (TypeScript):**
