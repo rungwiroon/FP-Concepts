@@ -503,9 +503,9 @@ process('  Hello World  ');  // "hello world!"
 
 **Pipe - ทำงานจากซ้ายไปขวา (อ่านง่ายกว่า!):**
 
-**ตัวอย่าง (TypeScript):**
+**ตัวอย่าง (TypeScript + Effect-TS):**
 ```typescript
-import { pipe } from 'fp-ts/function';
+import { pipe } from "effect/Function";
 
 // Pipe: ทำงานตามลำดับที่เขียน
 const result = pipe(
@@ -574,20 +574,19 @@ function processOrders(orders: Order[]): ProcessedOrder[] {
 }
 ```
 
-**แบบ Functional Composition (TypeScript):**
+**แบบ Functional Composition (TypeScript + Effect-TS):**
 ```typescript
-import { pipe } from 'fp-ts/function';
-import * as A from 'fp-ts/Array';
-import * as O from 'fp-ts/Option';
+import { pipe } from "effect/Function";
+import { Array, Option } from "effect";
 
 const processOrders = (orders: Order[]): ProcessedOrder[] =>
   pipe(
     orders,
-    A.filter(order => order.status === 'pending'),
-    A.filterMap(order => pipe(
+    Array.filter(order => order.status === 'pending'),
+    Array.filterMap(order => pipe(
       validateOrder(order),
-      O.map(enrichWithCustomerData),
-      O.map(calculateTotals)
+      Option.map(enrichWithCustomerData),
+      Option.map(calculateTotals)
     ))
   );
 ```
@@ -631,23 +630,23 @@ string email = user.Match(
 );
 ```
 
-**TypeScript + fp-ts:**
+**TypeScript + Effect-TS:**
 ```typescript
-import * as O from 'fp-ts/Option';
-import { pipe } from 'fp-ts/function';
+import { Option } from "effect";
+import { pipe } from "effect/Function";
 
 // ✅ Type-safe
-const user: O.Option<User> = O.fromNullable(
+const user: Option.Option<User> = Option.fromNullable(
   users.find(u => u.id === userId)
 );
 
 // ต้อง handle ทั้ง Some และ None
 const email = pipe(
   user,
-  O.match(
-    () => 'no-reply@example.com',
-    (u) => u.email
-  )
+  Option.match({
+    onNone: () => 'no-reply@example.com',
+    onSome: (u) => u.email
+  })
 );
 ```
 
@@ -692,34 +691,36 @@ result.Match(
 );
 ```
 
-**TypeScript + fp-ts:**
+**TypeScript + Effect-TS:**
 ```typescript
-import * as E from 'fp-ts/Either';
+import { Either } from "effect";
+import { pipe } from "effect/Function";
 
 // ✅ Type-safe error handling
+// หมายเหตุ: Effect-TS ใช้ Either<Right, Left> ไม่ใช่ Either<Left, Right>
 function createUser(
   email: string,
   name: string
-): E.Either<Error, User> {
+): Either.Either<User, Error> {
   if (!email) {
-    return E.left(new Error('Email is required'));
+    return Either.left(new Error('Email is required'));
   }
 
   if (!email.includes('@')) {
-    return E.left(new Error('Invalid email format'));
+    return Either.left(new Error('Invalid email format'));
   }
 
-  return E.right({ email, name });
+  return Either.right({ email, name });
 }
 
 // ใช้งาน
 const result = createUser('john@example.com', 'John');
 pipe(
   result,
-  E.match(
-    (error) => console.log(`Error: ${error.message}`),
-    (user) => console.log(`Created: ${user.email}`)
-  )
+  Either.match({
+    onLeft: (error) => console.log(`Error: ${error.message}`),
+    onRight: (user) => console.log(`Created: ${user.email}`)
+  })
 );
 ```
 
@@ -929,17 +930,17 @@ public Either<Error, Order> ProcessOrder(int orderId) =>
 // ไม่ต้อง try-catch!
 ```
 
-**ตัวอย่าง (TypeScript):**
+**ตัวอย่าง (TypeScript + Effect-TS):**
 ```typescript
-import * as E from 'fp-ts/Either';
-import { pipe } from 'fp-ts/function';
+import { Either } from "effect";
+import { pipe } from "effect/Function";
 
-const processOrder = (orderId: number): E.Either<Error, Order> =>
+const processOrder = (orderId: number): Either.Either<Order, Error> =>
   pipe(
     getOrder(orderId),
-    E.chain(validateOrder),
-    E.chain(processPayment),
-    E.chain(saveOrder)
+    Either.flatMap(validateOrder),
+    Either.flatMap(processPayment),
+    Either.flatMap(saveOrder)
   );
 ```
 
