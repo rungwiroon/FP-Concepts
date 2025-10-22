@@ -490,20 +490,20 @@ export const createTodo = (request: CreateTodoRequest): App<Todo> =>
     )
   );
 
-// ใช้ใน Component
-const { state, execute } = useApp<Todo>(env);
-
+// ใช้ใน Component - คอมไพเลอร์บังคับให้จัดการ validation
 const handleSubmit = async (e: FormEvent) => {
   e.preventDefault();
 
   const validation = validateTodo({ title, description });
 
-  if (Either.isLeft(validation)) {
-    setErrors(validation.left);
-    return;
-  }
-
-  await execute(createTodo(validation.right));
+  // ✅ Type-safe - คอมไพเลอร์บังคับให้ handle ทั้ง left และ right
+  pipe(
+    validation,
+    Either.match({
+      left: (errors) => setErrors(errors),
+      right: (validRequest) => execute(createTodo(validRequest))
+    })
+  );
 };
 ```
 
