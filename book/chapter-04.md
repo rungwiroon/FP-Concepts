@@ -66,7 +66,300 @@ public static class TodoService<M, RT>
 
 ---
 
-## 4.2 ทำไมต้อง 3 Type Parameters?
+## 4.2 Reader Monad - Foundation ของ Has Pattern
+
+### 4.2.1 Reader Monad คืออะไร?
+
+**Reader monad** เป็น pattern พื้นฐานใน Functional Programming สำหรับ **Dependency Injection**
+
+**แนวคิด:**
+> "Function ที่ต้องการ environment R เพื่อทำงาน และ return ค่า A"
+
+```
+Reader<R, A> = Function ที่รับ R และ return A
+             = R → A
+```
+
+**Use cases:**
+- Dependency Injection (database, logger, config)
+- Configuration management
+- Shared environment across functions
+
+### 4.2.2 Reader Monad ใน Haskell
+
+**Haskell มี Reader monad built-in:**
+
+```haskell
+-- Reader r a = r → a
+newtype Reader r a = Reader { runReader :: r -> a }
+
+-- ask: ขอ environment
+ask :: Reader r r
+ask = Reader id
+
+-- Basic usage
+greet :: Reader String String
+greet = do
+  name <- ask                      -- ← ขอ environment (String)
+  return $ "Hello, " ++ name
+
+-- Run reader
+result = runReader greet "Alice"  -- "Hello, Alice"
+```
+
+**Example: Database operations**
+
+```haskell
+-- Environment
+data Env = Env
+  { database :: Database
+  , logger   :: Logger
+  }
+
+-- Operations using Reader
+getUser :: Int -> Reader Env (Maybe User)
+getUser userId = do
+  env <- ask                       -- ← ขอ environment
+  let db = database env
+  return $ queryUser db userId
+
+logMessage :: String -> Reader Env ()
+logMessage msg = do
+  env <- ask
+  let log = logger env
+  return $ writeLog log msg
+
+-- Compose operations
+getUserAndLog :: Int -> Reader Env (Maybe User)
+getUserAndLog userId = do
+  user <- getUser userId
+  case user of
+    Just u  -> logMessage ("Found: " ++ userName u)
+    Nothing -> logMessage "User not found"
+  return user
+
+-- Run with environment
+main = do
+  let env = Env { database = myDb, logger = myLogger }
+  let result = runReader (getUserAndLog 123) env
+  print result
+```
+
+### 4.2.3 Reader Monad ใน C# (Traditional)
+
+**C# ก่อนมี language-ext v5:**
+
+```csharp
+// Reader<R, A> = Function: R → A
+public delegate A Reader<R, A>(R env);
+
+// Extension methods
+public static class ReaderExtensions
+{
+    // ask: ขอ environment
+    public static Reader<R, R> Ask<R>() =>
+        env => env;
+
+    // Map: (A → B) → Reader<R, A> → Reader<R, B>
+    public static Reader<R, B> Map<R, A, B>(
+        this Reader<R, A> reader,
+        Func<A, B> f) =>
+            env => f(reader(env));
+
+    // Bind: (A → Reader<R, B>) → Reader<R, A> → Reader<R, B>
+    public static Reader<R, B> Bind<R, A, B>(
+        this Reader<R, A> reader,
+        Func<A, Reader<R, B>> f) =>
+            env => f(reader(env))(env);
+}
+
+// Usage
+public record Env(IDatabase Database, ILogger Logger);
+
+public static Reader<Env, User?> GetUser(int userId) =>
+    env => env.Database.GetUserById(userId);
+
+public static Reader<Env, Unit> LogMessage(string message) =>
+    env =>
+    {
+        env.Logger.Log(message);
+        return Unit.Default;
+    };
+
+// Compose
+public static Reader<Env, User?> GetUserAndLog(int userId) =>
+    GetUser(userId).Bind(user =>
+        user != null
+            ? LogMessage($"Found: {user.Name}").Map(_ => user)
+            : LogMessage("Not found").Map(_ => (User?)null)
+    );
+
+// Run
+var env = new Env(database, logger);
+var result = GetUserAndLog(123)(env);  // ← Pass environment
+```
+
+### 4.2.4 ปัญหาของ Reader Monad แบบเก่า
+
+**❌ ปัญหา 1: Type Inference ไม่ดี**
+
+```csharp
+// ❌ ต้องระบุ type parameters ทุกที่
+var reader = ReaderExtensions.Ask<Env>();
+var result = reader.Map<Env, Env, string>(env => env.Config);
+//                  ^^^^  ^^^  ^^^^^^ ← ต้องระบุทุกตัว!
+```
+
+**❌ ปัญหา 2: ไม่มี LINQ syntax support**
+
+```csharp
+// ❌ ไม่สามารถใช้ from ... select ได้
+// ต้องใช้ Bind และ Map
+GetUser(userId)
+    .Bind(user => LogMessage($"Found: {user.Name}")
+        .Map(_ => user));
+
+// แทนที่จะเป็น (ถ้ามี LINQ support):
+// from user in GetUser(userId)
+// from _ in LogMessage($"Found: {user.Name}")
+// select user
+```
+
+**❌ ปัญหา 3: ไม่ type-safe สำหรับ multiple capabilities**
+
+```csharp
+// Environment ที่มีหลาก capabilities
+public record Env(
+    IDatabase Database,
+    ILogger Logger,
+    IConfig Config,
+    ICache Cache
+);
+
+// Function ที่ใช้แค่ Database
+public static Reader<Env, User?> GetUser(int id) =>
+    env => env.Database.GetUserById(id);
+
+// ❌ ปัญหา: Compiler ไม่รู้ว่า GetUser ใช้แค่ Database
+// ดูจาก signature: Reader<Env, User?>
+// ไม่บอกว่าใช้ capability อะไรบ้าง!
+```
+
+**❌ ปัญหา 4: ยากต่อการ test**
+
+```csharp
+// ❌ ต้องสร้าง Env เต็มๆแม้ test แค่ส่วนเดียว
+[Test]
+public void Should_Get_User()
+{
+    var mockDb = new MockDatabase();
+    var mockLogger = new MockLogger();      // ← ไม่ได้ใช้แต่ต้องสร้าง
+    var mockConfig = new MockConfig();      // ← ไม่ได้ใช้แต่ต้องสร้าง
+    var mockCache = new MockCache();        // ← ไม่ได้ใช้แต่ต้องสร้าง
+
+    var env = new Env(mockDb, mockLogger, mockConfig, mockCache);
+
+    var user = GetUser(123)(env);
+    Assert.That(user, Is.Not.Null);
+}
+```
+
+### 4.2.5 Has Pattern = Reader ที่ดีขึ้น
+
+**language-ext v5 แก้ปัญหาเหล่านี้ด้วย Has pattern:**
+
+```csharp
+// ✅ Type-safe: บอกชัดว่าใช้ capability อะไร
+public static K<M, User?> GetUser<M, RT>(int id)
+    where M : Monad<M>, MonadIO<M>
+    where RT : Has<M, DatabaseIO>           // ← ต้องมี DatabaseIO เท่านั้น!
+{
+    return
+        from db in Has<M, RT, DatabaseIO>.ask  // ← Reader.ask
+        from user in M.LiftIO(IO.lift(_ => db.GetUserById(id)))
+        select user;
+}
+
+// ✅ LINQ syntax support
+public static K<M, User?> GetUserAndLog<M, RT>(int id)
+    where M : Monad<M>, MonadIO<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>  // ← บอกชัด!
+{
+    return
+        from user in GetUser<M, RT>(id)
+        from _ in Logger<M, RT>.logInfo($"Found: {user?.Name ?? "None"}")
+        select user;
+}
+
+// ✅ Test ง่าย - สร้างแค่ capability ที่ใช้
+[Test]
+public async Task Should_Get_User()
+{
+    // สร้างแค่ DatabaseIO (ไม่ต้องสร้าง Logger, Config, Cache)
+    var testDb = new TestDatabaseIO();
+    testDb.Seed(new User(1, "Alice"));
+
+    var runtime = new TestRuntime(testDb);  // ← แค่ Database!
+
+    var result = await GetUser<Eff<TestRuntime>, TestRuntime>(1)
+        .RunAsync(runtime, EnvIO.New());
+
+    var user = result.Match(Succ: u => u, Fail: _ => null);
+    Assert.That(user?.Name, Is.EqualTo("Alice"));
+}
+```
+
+### 4.2.6 เปรียบเทียบ Reader vs Has
+
+| Aspect | Reader Monad | Has Pattern (language-ext v5) |
+|--------|--------------|------------------------------|
+| **Concept** | R → A | Reader + HKT |
+| **Type** | `Reader<R, A>` | `K<M, A>` with `RT : Has<M, T>` |
+| **Environment** | Monolithic R | Modular capabilities |
+| **Type inference** | ❌ ต้องระบุ type | ✅ Compiler infer ได้ |
+| **LINQ syntax** | ❌ ไม่รองรับ | ✅ รองรับ `from ... select` |
+| **Compiler checking** | ❌ ไม่บอก dependencies | ✅ บอกชัด capabilities ที่ใช้ |
+| **Testability** | ❌ ต้องสร้าง env เต็ม | ✅ สร้างแค่ที่ใช้ |
+| **Composition** | ❌ ยาก (nested Bind) | ✅ ง่าย (LINQ) |
+
+**ตัวอย่างเปรียบเทียบ:**
+
+```csharp
+// ❌ Reader - monolithic environment
+Reader<Env, User?> GetUser(int id) =>
+    env => env.Database.GetUserById(id);
+//  ^^^
+//  └─ ต้อง Env ทั้งหมด แม้ใช้แค่ Database
+
+// ✅ Has - modular capabilities
+K<M, User?> GetUser<M, RT>(int id)
+    where RT : Has<M, DatabaseIO>            // ← บอกชัดว่าใช้แค่ DatabaseIO
+{
+    return
+        from db in Has<M, RT, DatabaseIO>.ask
+        from user in M.LiftIO(IO.lift(_ => db.GetUserById(id)))
+        select user;
+}
+```
+
+### 4.2.7 สรุป: Has = Enhanced Reader
+
+**Has pattern คือ Reader monad ที่:**
+1. ✅ เพิ่ม **Higher-Kinded Types** (M และ K<M, A>)
+2. ✅ เพิ่ม **Modular capabilities** (แทน monolithic environment)
+3. ✅ เพิ่ม **Type-level tracking** ของ dependencies
+4. ✅ เพิ่ม **LINQ syntax support**
+5. ✅ เพิ่ม **Better testability**
+
+**หัวใจหลักเหมือนกัน:**
+- Reader: `R → A`
+- Has: `RT → T` ผ่าน `Has<M, RT, T>.ask`
+
+ทั้งคู่เป็น **Dependency Injection แบบ Functional**!
+
+---
+
+## 4.3 ทำไมต้อง 3 Type Parameters?
 
 นี่คือคำถามสำคัญ - **ทำไม business logic ต้องใช้ 3 parameters แต่ runtime ใช้ 2?**
 
