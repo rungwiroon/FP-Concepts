@@ -1313,14 +1313,20 @@ var result = await GetTodo(123).RunAsync(runtime, envIO);
 ```
 Effect Types              Run Method                              Result Type
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IO<A>                     .Run()                           →      A
+K<IO, A>                  .Run()                           →      A
                           .Run(EnvIO)                      →      A
                           .RunAsync()                      →      ValueTask<A>
                           .RunAsync(EnvIO)                 →      ValueTask<A>
                           ⚠️  Throws exception on failure
 
-K<Eff<RT>, A>             .RunAsync(RT runtime, EnvIO)     →      Fin<A>
+K<IO, A>                  .RunSafe()                       →      Fin<A>
+                          .RunSafe(EnvIO)                  →      Fin<A>
+                          .RunSafeAsync()                  →      ValueTask<Fin<A>>
+                          .RunSafeAsync(EnvIO)             →      ValueTask<Fin<A>>
                           ✅  Type-safe error handling
+
+K<Eff<RT>, A>             .RunAsync(RT runtime, EnvIO)     →      Fin<A>
+                          ✅  Type-safe error handling (always)
 
 Description               Execute                                 Result
 (ยังไม่รัน)                (รันจริง)                               (ผลลัพธ์)
@@ -1328,23 +1334,24 @@ Description               Execute                                 Result
 
 **ความแตกต่างสำคัญ:**
 
-**IO\<A\> - Throws Exceptions ❌**
+**1. IO\<A\> - Unsafe Methods (Throws Exceptions) ❌**
+
 ```csharp
 using LanguageExt;
 
 IO<int> divide = IO.lift(() => 10 / 0);
 
+// ❌ Run() - throws exception
 try
 {
     int result = divide.Run();  // ← Throws DivideByZeroException!
 }
 catch (DivideByZeroException ex)
 {
-    // ❌ ต้องใช้ try-catch - ไม่ type-safe
     Console.WriteLine("Error!");
 }
 
-// RunAsync ก็เหมือนกัน - throws exception
+// ❌ RunAsync() - throws exception
 try
 {
     int result = await divide.RunAsync();  // ← Throws!
@@ -1355,7 +1362,37 @@ catch (DivideByZeroException ex)
 }
 ```
 
-**Eff\<RT, A\> / K\<Eff\<RT\>, A\> - Type-safe ✅**
+**2. IO\<A\> - Safe Methods (Type-safe) ✅**
+
+```csharp
+using LanguageExt;
+
+IO<int> divide = IO.lift(() => 10 / 0);
+
+// ✅ RunSafe() - returns Fin<int>
+Fin<int> result = divide.RunSafe();
+
+result.Match(
+    Succ: value => Console.WriteLine($"Result: {value}"),
+    Fail: error => Console.WriteLine($"Error: {error.Message}")
+);
+// Output: "Error: Attempted to divide by zero."
+
+// ✅ RunSafeAsync() - returns ValueTask<Fin<int>>
+ValueTask<Fin<int>> resultTask = divide.RunSafeAsync();
+Fin<int> finResult = await resultTask;
+
+finResult.Match(
+    Succ: value => Console.WriteLine($"Result: {value}"),
+    Fail: error => Console.WriteLine($"Error: {error.Message}")
+);
+// Output: "Error: Attempted to divide by zero."
+
+// ไม่ต้อง try-catch เลย!
+```
+
+**3. Eff\<RT, A\> / K\<Eff\<RT\>, A\> - Always Type-safe ✅**
+
 ```csharp
 using LanguageExt;
 using LanguageExt.Effects;
@@ -1365,25 +1402,52 @@ K<Eff<Runtime>, int> divide =
     from result in Eff<Runtime, int>(rt => 10 / 0)
     select result;
 
-// Run → ได้ Fin<int> ไม่ throw exception
+// Run → ได้ Fin<int> เสมอ (ไม่มี unsafe version!)
 var runtime = new Runtime();
 Fin<int> result = await divide.RunAsync(runtime, EnvIO.New());
 
 // ✅ Pattern matching - type-safe!
 var message = result.Match(
     Succ: value => $"Result: {value}",
-    Fail: error => $"Error: {error.Message}"  // ← ได้ "Error: ..."
+    Fail: error => $"Error: {error.Message}"
 );
+// Output: "Error: Attempted to divide by zero."
 
 // ไม่ต้อง try-catch!
 ```
 
-**ทำไมเราใช้ Eff แทน IO?**
+**เปรียบเทียบ: IO vs Eff**
 
-✅ **Type-safe error handling** - ไม่ throw exceptions
-✅ **Compiler enforcement** - ต้อง handle Fin\<A\>
-✅ **Composable** - Chain effects โดยไม่ต้อง try-catch
-✅ **Testable** - Error cases เป็น values ธรรมดา
+| Aspect | K\<IO, A\> | K\<Eff\<RT\>, A\> |
+|--------|-----------|-----------------|
+| **Unsafe methods** | ✅ มี (.Run, .RunAsync) | ❌ ไม่มี |
+| **Safe methods** | ✅ มี (.RunSafe, .RunSafeAsync) | ✅ มีเท่านั้น (.RunAsync) |
+| **Capabilities** | ❌ ไม่รองรับ | ✅ รองรับ (Has pattern) |
+| **Default behavior** | ⚠️ Unsafe (throws) | ✅ Safe (Fin\<A\>) |
+| **Use case** | Simple effects | Complex apps with DI |
+
+**ทำไมเราใช้ Eff ใน TodoApp?**
+
+✅ **Always type-safe** - ไม่มี unsafe methods, return Fin\<A\> เสมอ
+✅ **Capabilities support** - รองรับ Has\<M, RT, T\> pattern
+✅ **Testability** - เปลี่ยน runtime ได้ง่าย (AppRuntime vs TestRuntime)
+✅ **Consistency** - ไม่ต้องเลือกระหว่าง .Run vs .RunSafe
+✅ **Dependency Injection** - Manage dependencies ผ่าน runtime
+
+**เมื่อไหร่ใช้ IO vs Eff?**
+
+**ใช้ K\<IO, A\> เมื่อ:**
+- Effect ง่ายๆ ไม่ต้องการ capabilities
+- Console apps แบบ simple
+- Scripts หรือ utilities
+- แต่ควรใช้ `.RunSafe()` เสมอแทน `.Run()`
+
+**ใช้ K\<Eff\<RT\>, A\> เมื่อ:**
+- ต้องการ capabilities (Database, Logger, etc.)
+- Web applications / APIs
+- Complex business logic
+- ต้องการ testability สูง
+- ต้องการ dependency injection
 
 ### 6.5.2 Fin\<A\> - Result Type
 
