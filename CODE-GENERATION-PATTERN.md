@@ -84,10 +84,10 @@ namespace TodoApp.Attributes;
 /// <summary>
 /// Marks a domain entity for automatic repository generation.
 /// Source generator will create:
-/// - IXxxRepository trait interface
-/// - XxxRepository capability module
-/// - TestXxxRepository test implementation
-/// - LiveXxxRepository EF Core implementation
+/// - IXxxRepository trait interface (with Specification and Pagination support)
+/// - XxxRepository capability module (with find/count/findPaged methods)
+/// - TestXxxRepository test implementation (in-memory with LINQ)
+/// - LiveXxxRepository EF Core implementation (translates to SQL)
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
 public class GenerateRepositoryAttribute : Attribute
@@ -96,11 +96,6 @@ public class GenerateRepositoryAttribute : Attribute
     /// Name of the DbSet property in AppDbContext (defaults to entity name + "s")
     /// </summary>
     public string? DbSetName { get; set; }
-
-    /// <summary>
-    /// Additional query methods to generate (e.g., "GetByEmail", "GetByUserId")
-    /// </summary>
-    public string[]? CustomQueries { get; set; }
 }
 
 /// <summary>
@@ -109,16 +104,6 @@ public class GenerateRepositoryAttribute : Attribute
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
 public class RepositoryKeyAttribute : Attribute
 {
-}
-
-/// <summary>
-/// Marks a property for custom query generation.
-/// Generates GetByXxx methods in the repository.
-/// </summary>
-[AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
-public class RepositoryQueryAttribute : Attribute
-{
-    public string? MethodName { get; set; }
 }
 ```
 
@@ -137,10 +122,7 @@ public record Todo
     public string Title { get; init; } = string.Empty;
     public string? Description { get; init; }
     public bool IsCompleted { get; init; }
-
-    [RepositoryQuery(MethodName = "GetTodosByUser")]
     public int UserId { get; init; }
-
     public DateTime CreatedAt { get; init; }
 }
 
@@ -151,9 +133,7 @@ public record User
     [RepositoryKey]
     public int Id { get; init; }
 
-    [RepositoryQuery(MethodName = "GetUserByEmail")]
     public string Email { get; init; } = string.Empty;
-
     public string Name { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; }
 }
@@ -166,10 +146,7 @@ public record Project
     public Guid Id { get; init; }
 
     public string Name { get; init; } = string.Empty;
-
-    [RepositoryQuery(MethodName = "GetProjectsByUser")]
     public int OwnerId { get; init; }
-
     public DateTime CreatedAt { get; init; }
 }
 ```
@@ -241,19 +218,6 @@ public class RepositoryGenerator : IIncrementalGenerator
 
         if (keyProperty is null) return null;
 
-        // Find query properties
-        var queryProperties = symbol.GetMembers()
-            .OfType<IPropertySymbol>()
-            .Where(p => p.GetAttributes()
-                .Any(a => a.AttributeClass?.Name == "RepositoryQueryAttribute"))
-            .Select(p => new QueryPropertyInfo
-            {
-                PropertyName = p.Name,
-                PropertyType = p.Type.ToDisplayString(),
-                MethodName = GetQueryMethodName(p)
-            })
-            .ToImmutableArray();
-
         return new EntityInfo
         {
             EntityName = entityName,
@@ -263,18 +227,8 @@ public class RepositoryGenerator : IIncrementalGenerator
             {
                 Name = keyProperty.Name,
                 Type = keyProperty.Type.ToDisplayString()
-            },
-            QueryProperties = queryProperties
+            }
         };
-    }
-
-    private static string GetQueryMethodName(IPropertySymbol property)
-    {
-        var attr = property.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.Name == "RepositoryQueryAttribute");
-
-        var methodName = GetAttributeValue<string>(attr, "MethodName");
-        return methodName ?? $"GetBy{property.Name}";
     }
 
     private static T? GetAttributeValue<T>(AttributeData? attribute, string name)
@@ -302,6 +256,8 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using LanguageExt;
+using TodoApp.Domain.Specifications;
+using TodoApp.Domain.Models;
 using {{entity.Namespace}};
 
 namespace TodoApp.Infrastructure.Traits;
@@ -309,16 +265,27 @@ namespace TodoApp.Infrastructure.Traits;
 /// <summary>
 /// Repository trait for {{entity.EntityName}} entity.
 /// Auto-generated from [GenerateRepository] attribute.
+/// Supports Specification Pattern and Pagination Pattern from SCALING-PATTERNS.md.
 /// </summary>
 public interface I{{entity.EntityName}}Repository
 {
-    // Read operations (async, return values)
+    // Standard CRUD operations
     Task<List<{{entity.EntityName}}>> GetAll{{entity.EntityName}}sAsync(CancellationToken ct);
     Task<Option<{{entity.EntityName}}>> Get{{entity.EntityName}}ByIdAsync({{entity.KeyProperty.Type}} id, CancellationToken ct);
 
-{{GenerateCustomQuerySignatures(entity)}}
+    // ✅ Specification Pattern - Generic query methods
+    Task<List<{{entity.EntityName}}>> FindAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct);
+    Task<int> CountAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct);
 
-    // Write operations (sync, modify context only)
+    // ✅ Pagination Pattern - Paginated queries with specifications
+    Task<PagedResult<{{entity.EntityName}}>> FindPagedAsync(
+        Specification<{{entity.EntityName}}> spec,
+        int pageNumber,
+        int pageSize,
+        SortOrder<{{entity.EntityName}}>? sortOrder,
+        CancellationToken ct);
+
+    // Write operations (sync, modify context only - Unit of Work handles saving)
     void Add{{entity.EntityName}}({{entity.EntityName}} entity);
     void Update{{entity.EntityName}}({{entity.EntityName}} entity);
     void Delete{{entity.EntityName}}({{entity.EntityName}} entity);
@@ -338,6 +305,8 @@ using System;
 using System.Collections.Generic;
 using LanguageExt;
 using LanguageExt.Traits;
+using TodoApp.Domain.Specifications;
+using TodoApp.Domain.Models;
 using TodoApp.Infrastructure.Traits;
 using {{entity.Namespace}};
 using static LanguageExt.Prelude;
@@ -347,34 +316,50 @@ namespace TodoApp.Infrastructure.Capabilities;
 /// <summary>
 /// Capability module for {{entity.EntityName}} repository using Has pattern.
 /// Auto-generated from [GenerateRepository] attribute.
+/// Supports Specification and Pagination patterns from SCALING-PATTERNS.md.
 /// </summary>
 public static class {{entity.EntityName}}Repository<M, RT>
     where M : Monad<M>, MonadIO<M>
     where RT : Has<M, I{{entity.EntityName}}Repository>
 {
-    /// <summary>
-    /// Gets all {{entity.EntityName}} entities.
-    /// </summary>
+    // Standard CRUD queries
     public static K<M, List<{{entity.EntityName}}>> getAll{{entity.EntityName}}s =>
         from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
         from entities in M.LiftIO(IO.liftAsync(env =>
             repo.GetAll{{entity.EntityName}}sAsync(env.Token)))
         select entities;
 
-    /// <summary>
-    /// Gets a {{entity.EntityName}} by its ID.
-    /// </summary>
     public static K<M, Option<{{entity.EntityName}}>> get{{entity.EntityName}}ById({{entity.KeyProperty.Type}} id) =>
         from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
         from entity in M.LiftIO(IO.liftAsync(env =>
             repo.Get{{entity.EntityName}}ByIdAsync(id, env.Token)))
         select entity;
 
-{{GenerateCustomQueryMethods(entity)}}
+    // ✅ Specification Pattern - Composable queries
+    public static K<M, List<{{entity.EntityName}}>> find(Specification<{{entity.EntityName}}> spec) =>
+        from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
+        from entities in M.LiftIO(IO.liftAsync(env =>
+            repo.FindAsync(spec, env.Token)))
+        select entities;
 
-    /// <summary>
-    /// Adds a new {{entity.EntityName}} (does not save).
-    /// </summary>
+    public static K<M, int> count(Specification<{{entity.EntityName}}> spec) =>
+        from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
+        from count in M.LiftIO(IO.liftAsync(env =>
+            repo.CountAsync(spec, env.Token)))
+        select count;
+
+    // ✅ Pagination Pattern - Efficient paginated queries
+    public static K<M, PagedResult<{{entity.EntityName}}>> findPaged(
+        Specification<{{entity.EntityName}}> spec,
+        int pageNumber,
+        int pageSize,
+        SortOrder<{{entity.EntityName}}>? sortOrder = null) =>
+        from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
+        from result in M.LiftIO(IO.liftAsync(env =>
+            repo.FindPagedAsync(spec, pageNumber, pageSize, sortOrder, env.Token)))
+        select result;
+
+    // Write operations (modify context only - UnitOfWork handles saving)
     public static K<M, Unit> add{{entity.EntityName}}({{entity.EntityName}} entity) =>
         from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
         from _ in M.LiftIO(() =>
@@ -384,9 +369,6 @@ public static class {{entity.EntityName}}Repository<M, RT>
         })
         select unit;
 
-    /// <summary>
-    /// Updates a {{entity.EntityName}} (does not save).
-    /// </summary>
     public static K<M, Unit> update{{entity.EntityName}}({{entity.EntityName}} entity) =>
         from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
         from _ in M.LiftIO(() =>
@@ -396,9 +378,6 @@ public static class {{entity.EntityName}}Repository<M, RT>
         })
         select unit;
 
-    /// <summary>
-    /// Deletes a {{entity.EntityName}} (does not save).
-    /// </summary>
     public static K<M, Unit> delete{{entity.EntityName}}({{entity.EntityName}} entity) =>
         from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
         from _ in M.LiftIO(() =>
@@ -425,6 +404,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using LanguageExt;
+using TodoApp.Domain.Specifications;
+using TodoApp.Domain.Models;
 using TodoApp.Infrastructure.Traits;
 using {{entity.Namespace}};
 using static LanguageExt.Prelude;
@@ -434,13 +415,14 @@ namespace TodoApp.Tests.TestInfrastructure;
 /// <summary>
 /// Test implementation of I{{entity.EntityName}}Repository using in-memory dictionary.
 /// Auto-generated from [GenerateRepository] attribute.
+/// Uses LINQ to Objects for specification filtering (pure in-memory).
 /// </summary>
 public class Test{{entity.EntityName}}Repository : I{{entity.EntityName}}Repository
 {
     private readonly Dictionary<{{entity.KeyProperty.Type}}, {{entity.EntityName}}> _entities = new();
     private {{GetNextIdInitializer(entity.KeyProperty.Type)}}
 
-    // Read operations
+    // Standard CRUD operations
     public Task<List<{{entity.EntityName}}>> GetAll{{entity.EntityName}}sAsync(CancellationToken ct)
     {
         return Task.FromResult(_entities.Values.ToList());
@@ -452,9 +434,56 @@ public class Test{{entity.EntityName}}Repository : I{{entity.EntityName}}Reposit
         return Task.FromResult(result);
     }
 
-{{GenerateTestCustomQueries(entity)}}
+    // ✅ Specification Pattern - LINQ to Objects
+    public Task<List<{{entity.EntityName}}>> FindAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct)
+    {
+        var predicate = spec.ToExpression().Compile();
+        var results = _entities.Values.Where(predicate).ToList();
+        return Task.FromResult(results);
+    }
 
-    // Write operations
+    public Task<int> CountAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct)
+    {
+        var predicate = spec.ToExpression().Compile();
+        var count = _entities.Values.Count(predicate);
+        return Task.FromResult(count);
+    }
+
+    // ✅ Pagination Pattern - In-memory pagination with sorting
+    public Task<PagedResult<{{entity.EntityName}}>> FindPagedAsync(
+        Specification<{{entity.EntityName}}> spec,
+        int pageNumber,
+        int pageSize,
+        SortOrder<{{entity.EntityName}}>? sortOrder,
+        CancellationToken ct)
+    {
+        var predicate = spec.ToExpression().Compile();
+        var query = _entities.Values.Where(predicate).AsQueryable();
+
+        // Apply sorting if specified
+        if (sortOrder != null)
+        {
+            query = sortOrder.Ascending
+                ? query.OrderBy(sortOrder.OrderBy.Compile())
+                : query.OrderByDescending(sortOrder.OrderBy.Compile());
+        }
+
+        var totalCount = query.Count();
+        var items = query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        var result = new PagedResult<{{entity.EntityName}}>(
+            items,
+            totalCount,
+            pageNumber,
+            pageSize);
+
+        return Task.FromResult(result);
+    }
+
+    // Write operations (modify in-memory dictionary only)
     public void Add{{entity.EntityName}}({{entity.EntityName}} entity)
     {
         if ({{GetIsDefaultKeyCheck("entity." + entity.KeyProperty.Name, entity.KeyProperty.Type)}})
@@ -511,6 +540,8 @@ using System.Threading.Tasks;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using TodoApp.Data;
+using TodoApp.Domain.Specifications;
+using TodoApp.Domain.Models;
 using TodoApp.Infrastructure.Traits;
 using {{entity.Namespace}};
 using static LanguageExt.Prelude;
@@ -520,10 +551,11 @@ namespace TodoApp.Infrastructure.Live;
 /// <summary>
 /// Production implementation of I{{entity.EntityName}}Repository using EF Core.
 /// Auto-generated from [GenerateRepository] attribute.
+/// Translates specifications to SQL for efficient database queries.
 /// </summary>
 public class Live{{entity.EntityName}}Repository(AppDbContext context) : I{{entity.EntityName}}Repository
 {
-    // Read operations
+    // Standard CRUD operations
     public async Task<List<{{entity.EntityName}}>> GetAll{{entity.EntityName}}sAsync(CancellationToken ct)
     {
         return await context.{{entity.DbSetName}}
@@ -540,9 +572,56 @@ public class Live{{entity.EntityName}}Repository(AppDbContext context) : I{{enti
         return Optional(entity);
     }
 
-{{GenerateLiveCustomQueries(entity)}}
+    // ✅ Specification Pattern - EF Core translates to SQL WHERE clause
+    public async Task<List<{{entity.EntityName}}>> FindAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct)
+    {
+        return await context.{{entity.DbSetName}}
+            .AsNoTracking()
+            .Where(spec.ToExpression())  // Expression tree → SQL
+            .ToListAsync(ct);
+    }
 
-    // Write operations
+    public async Task<int> CountAsync(Specification<{{entity.EntityName}}> spec, CancellationToken ct)
+    {
+        return await context.{{entity.DbSetName}}
+            .Where(spec.ToExpression())
+            .CountAsync(ct);
+    }
+
+    // ✅ Pagination Pattern - Efficient SQL with OFFSET/FETCH
+    public async Task<PagedResult<{{entity.EntityName}}>> FindPagedAsync(
+        Specification<{{entity.EntityName}}> spec,
+        int pageNumber,
+        int pageSize,
+        SortOrder<{{entity.EntityName}}>? sortOrder,
+        CancellationToken ct)
+    {
+        var query = context.{{entity.DbSetName}}
+            .AsNoTracking()
+            .Where(spec.ToExpression());
+
+        // Apply sorting if specified
+        if (sortOrder != null)
+        {
+            query = sortOrder.Ascending
+                ? query.OrderBy(sortOrder.OrderBy)
+                : query.OrderByDescending(sortOrder.OrderBy);
+        }
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<{{entity.EntityName}}>(
+            items,
+            totalCount,
+            pageNumber,
+            pageSize);
+    }
+
+    // Write operations (modify DbContext only - UnitOfWork saves)
     public void Add{{entity.EntityName}}({{entity.EntityName}} entity)
     {
         context.{{entity.DbSetName}}.Add(entity);
@@ -564,76 +643,6 @@ public class Live{{entity.EntityName}}Repository(AppDbContext context) : I{{enti
     }
 
     // Helper methods for code generation
-    private static string GenerateCustomQuerySignatures(EntityInfo entity)
-    {
-        var sb = new StringBuilder();
-        foreach (var query in entity.QueryProperties)
-        {
-            sb.AppendLine($"    Task<List<{entity.EntityName}>> {query.MethodName}Async({query.PropertyType} {ToCamelCase(query.PropertyName)}, CancellationToken ct);");
-        }
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string GenerateCustomQueryMethods(EntityInfo entity)
-    {
-        var sb = new StringBuilder();
-        foreach (var query in entity.QueryProperties)
-        {
-            var paramName = ToCamelCase(query.PropertyName);
-            sb.AppendLine($$"""
-    /// <summary>
-    /// Gets {{entity.EntityName}} entities by {{query.PropertyName}}.
-    /// </summary>
-    public static K<M, List<{{entity.EntityName}}>> {{ToCamelCase(query.MethodName)}}({{query.PropertyType}} {{paramName}}) =>
-        from repo in Has<M, RT, I{{entity.EntityName}}Repository>.ask
-        from entities in M.LiftIO(IO.liftAsync(env =>
-            repo.{{query.MethodName}}Async({{paramName}}, env.Token)))
-        select entities;
-
-""");
-        }
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string GenerateTestCustomQueries(EntityInfo entity)
-    {
-        var sb = new StringBuilder();
-        foreach (var query in entity.QueryProperties)
-        {
-            var paramName = ToCamelCase(query.PropertyName);
-            sb.AppendLine($$"""
-    public Task<List<{{entity.EntityName}}>> {{query.MethodName}}Async({{query.PropertyType}} {{paramName}}, CancellationToken ct)
-    {
-        var result = _entities.Values
-            .Where(e => {{GetEqualityCheck($"e.{query.PropertyName}", paramName, query.PropertyType)}})
-            .ToList();
-        return Task.FromResult(result);
-    }
-
-""");
-        }
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string GenerateLiveCustomQueries(EntityInfo entity)
-    {
-        var sb = new StringBuilder();
-        foreach (var query in entity.QueryProperties)
-        {
-            var paramName = ToCamelCase(query.PropertyName);
-            sb.AppendLine($$"""
-    public async Task<List<{{entity.EntityName}}>> {{query.MethodName}}Async({{query.PropertyType}} {{paramName}}, CancellationToken ct)
-    {
-        return await context.{{entity.DbSetName}}
-            .AsNoTracking()
-            .Where(e => e.{{query.PropertyName}} == {{paramName}})
-            .ToListAsync(ct);
-    }
-
-""");
-        }
-        return sb.ToString().TrimEnd();
-    }
 
     private static string GetNextIdInitializer(string type)
     {
@@ -676,15 +685,6 @@ public class Live{{entity.EntityName}}Repository(AppDbContext context) : I{{enti
         };
     }
 
-    private static string GetEqualityCheck(string left, string right, string type)
-    {
-        return type switch
-        {
-            "string" => $"{left}.Equals({right}, StringComparison.OrdinalIgnoreCase)",
-            _ => $"{left} == {right}"
-        };
-    }
-
     private static string ToCamelCase(string str)
     {
         if (string.IsNullOrEmpty(str) || char.IsLower(str[0]))
@@ -700,20 +700,12 @@ record EntityInfo
     public required string Namespace { get; init; }
     public required string DbSetName { get; init; }
     public required PropertyInfo KeyProperty { get; init; }
-    public required ImmutableArray<QueryPropertyInfo> QueryProperties { get; init; }
 }
 
 record PropertyInfo
 {
     public required string Name { get; init; }
     public required string Type { get; init; }
-}
-
-record QueryPropertyInfo
-{
-    public required string PropertyName { get; init; }
-    public required string PropertyType { get; init; }
-    public required string MethodName { get; init; }
 }
 ```
 
@@ -755,7 +747,7 @@ public class LiveTodoRepository : ITodoRepository { ... }
 // Total: ~120 lines × N entities = LOTS of boilerplate
 ```
 
-### After (Generated - 3 lines per entity!)
+### After (Generated - 2 lines per entity!)
 
 ```csharp
 // ✅ Automated: Just annotate your entity!
@@ -767,23 +759,38 @@ public record Todo
     public int Id { get; init; }
 
     public string Title { get; init; } = string.Empty;
-
-    [RepositoryQuery(MethodName = "GetTodosByUser")]
+    public string? Description { get; init; }
+    public bool IsCompleted { get; init; }
     public int UserId { get; init; }
-
     public DateTime CreatedAt { get; init; }
 }
 
 // That's it! All 4 files generated automatically at compile-time:
-// ✅ ITodoRepository.g.cs
-// ✅ TodoRepository.g.cs
-// ✅ TestTodoRepository.g.cs
-// ✅ LiveTodoRepository.g.cs
+// ✅ ITodoRepository.g.cs (with FindAsync, CountAsync, FindPagedAsync)
+// ✅ TodoRepository.g.cs (with find, count, findPaged)
+// ✅ TestTodoRepository.g.cs (LINQ to Objects)
+// ✅ LiveTodoRepository.g.cs (EF Core → SQL)
 ```
 
-### Using Generated Code
+### Using Generated Code with Specifications
 
 ```csharp
+// Domain/Specifications/TodoSpecifications.cs
+public class TodosByUserSpec : Specification<Todo>
+{
+    private readonly int _userId;
+    public TodosByUserSpec(int userId) => _userId = userId;
+
+    public override Expression<Func<Todo, bool>> ToExpression() =>
+        todo => todo.UserId == _userId;
+}
+
+public class CompletedTodoSpec : Specification<Todo>
+{
+    public override Expression<Func<Todo, bool>> ToExpression() =>
+        todo => todo.IsCompleted;
+}
+
 // Application/Todos/TodoService.cs
 public static class TodoService<M, RT>
     where M : Monad<M>, MonadIO<M>, Fallible<M>
@@ -791,31 +798,77 @@ public static class TodoService<M, RT>
                Has<M, IUnitOfWork>,
                Has<M, ILoggerIO>
 {
-    public static K<M, Todo> CreateTodo(string title) =>
-        from todo in M.Pure(new Todo { Title = title })
+    // ✅ Create todo with generated repository
+    public static K<M, Todo> CreateTodo(string title, int userId) =>
+        from todo in M.Pure(new Todo { Title = title, UserId = userId, CreatedAt = DateTime.UtcNow })
         from _ in TodoRepository<M, RT>.addTodo(todo)    // ✅ Generated capability
         from __ in UnitOfWork<M, RT>.saveChanges
         select todo;
 
-    // ✅ Custom query generated from [RepositoryQuery] attribute
-    public static K<M, List<Todo>> GetUserTodos(int userId) =>
-        TodoRepository<M, RT>.getTodosByUser(userId);
+    // ✅ Query using Specification Pattern (not custom methods!)
+    public static K<M, List<Todo>> GetCompletedTodosByUser(int userId) =>
+        TodoRepository<M, RT>.find(
+            new CompletedTodoSpec()
+                .And(new TodosByUserSpec(userId))
+        );
+
+    // ✅ Paginated query with generated findPaged
+    public static K<M, PagedResult<Todo>> GetUserTodosPaged(
+        int userId,
+        int pageNumber,
+        int pageSize) =>
+        TodoRepository<M, RT>.findPaged(
+            new TodosByUserSpec(userId),
+            pageNumber,
+            pageSize,
+            new SortOrder<Todo>(t => t.CreatedAt, ascending: false)
+        );
 }
 
 // Tests
 [Test]
-public async Task Test()
+public async Task TestCompletedTodosByUser()
 {
     var runtime = new TestRuntime();
 
     // ✅ Generated test repository with helpers
-    runtime.TodoRepository.Seed(new Todo { Id = 1, Title = "Test" });
+    runtime.TodoRepository.Seed(
+        new Todo { Id = 1, Title = "Test 1", UserId = 1, IsCompleted = true },
+        new Todo { Id = 2, Title = "Test 2", UserId = 1, IsCompleted = false },
+        new Todo { Id = 3, Title = "Test 3", UserId = 2, IsCompleted = true }
+    );
 
+    // ✅ Generated find method works with specifications
     var result = await TodoService<Eff<TestRuntime>, TestRuntime>
-        .GetUserTodos(1)
+        .GetCompletedTodosByUser(1)
         .RunAsync(runtime, EnvIO.New());
 
-    Assert.AreEqual(1, runtime.TodoRepository.Count);  // ✅ Generated helper
+    Assert.AreEqual(1, result.Count);  // Only completed todos for user 1
+    Assert.IsTrue(result[0].IsCompleted);
+}
+
+[Test]
+public async Task TestPaginatedQuery()
+{
+    var runtime = new TestRuntime();
+
+    // Seed 25 todos
+    runtime.TodoRepository.Seed(
+        Enumerable.Range(1, 25).Select(i =>
+            new Todo { Id = i, Title = $"Todo {i}", UserId = 1 }
+        ).ToArray()
+    );
+
+    // ✅ Generated findPaged method
+    var result = await TodoService<Eff<TestRuntime>, TestRuntime>
+        .GetUserTodosPaged(1, pageNumber: 2, pageSize: 10)
+        .RunAsync(runtime, EnvIO.New());
+
+    Assert.AreEqual(10, result.Items.Count);     // Page 2 has 10 items
+    Assert.AreEqual(25, result.TotalCount);      // Total is 25
+    Assert.AreEqual(3, result.TotalPages);       // 3 pages total
+    Assert.IsTrue(result.HasPreviousPage);       // Page 2 has previous
+    Assert.IsTrue(result.HasNextPage);           // Page 2 has next
 }
 ```
 
@@ -840,23 +893,39 @@ public async Task Test()
 **Total: ~20 lines, 5 minutes**
 
 ```csharp
-// Step 1: Define entity
+// Step 1: Define entity with attributes
 [GenerateRepository]
 public record Comment
 {
     [RepositoryKey]
     public int Id { get; init; }
 
-    [RepositoryQuery]
     public int PostId { get; init; }
-
-    [RepositoryQuery]
     public int UserId { get; init; }
-
     public string Text { get; init; } = string.Empty;
+    public DateTime CreatedAt { get; init; }
 }
 
-// Step 2 & 3: Update runtimes (just add one line each)
+// Step 2: Create specifications for querying (instead of custom methods)
+public class CommentsByPostSpec : Specification<Comment>
+{
+    private readonly int _postId;
+    public CommentsByPostSpec(int postId) => _postId = postId;
+
+    public override Expression<Func<Comment, bool>> ToExpression() =>
+        comment => comment.PostId == _postId;
+}
+
+public class CommentsByUserSpec : Specification<Comment>
+{
+    private readonly int _userId;
+    public CommentsByUserSpec(int userId) => _userId = userId;
+
+    public override Expression<Func<Comment, bool>> ToExpression() =>
+        comment => comment.UserId == _userId;
+}
+
+// Step 3 & 4: Update runtimes (just add one line each)
 public class AppRuntime :
     Has<Eff<AppRuntime>, ICommentRepository>,  // ✅ Auto-generated
     // ... other traits
@@ -871,7 +940,24 @@ public class AppRuntime :
     ICommentRepository Has<Eff<AppRuntime>, ICommentRepository>.Ask => CommentRepository;
 }
 
-// Done! 100+ lines of code generated automatically
+public class TestRuntime :
+    Has<Eff<TestRuntime>, ICommentRepository>,  // ✅ Auto-generated
+    // ... other traits
+{
+    public TestRuntime()
+    {
+        CommentRepository = new TestCommentRepository();  // ✅ Auto-generated
+        // ... other repos
+    }
+
+    public ICommentRepository CommentRepository { get; }
+    ICommentRepository Has<Eff<TestRuntime>, ICommentRepository>.Ask => CommentRepository;
+}
+
+// Done! 150+ lines of code generated automatically
+// Use it with specifications:
+// var comments = await CommentRepository<M, RT>.find(new CommentsByPostSpec(postId));
+// var pagedComments = await CommentRepository<M, RT>.findPaged(spec, pageNumber, pageSize);
 ```
 
 ## View Generated Code
@@ -894,73 +980,111 @@ You can also see them in:
 obj/Debug/net8.0/generated/TodoApp.SourceGenerators/...
 ```
 
-## Advanced: Custom Repository Methods
+## Advanced: Custom Specifications for Complex Queries
 
-For entity-specific logic that doesn't fit the pattern, use partial classes:
+For entity-specific complex query logic, create custom Specifications instead of repository methods:
 
 ```csharp
-// Infrastructure/Traits/ITodoRepository.Custom.cs
-public partial interface ITodoRepository
+// ✅ RECOMMENDED: Use Specification Pattern
+// Domain/Specifications/OverdueTodoSpec.cs
+public class OverdueTodoSpec : Specification<Todo>
 {
-    // ✅ Custom method not generated
-    Task<List<Todo>> GetOverdueTodosAsync(CancellationToken ct);
-}
+    private readonly DateTime _asOfDate;
 
-// Infrastructure/Live/LiveTodoRepository.Custom.cs
-public partial class LiveTodoRepository
-{
-    // ✅ Custom implementation
-    public async Task<List<Todo>> GetOverdueTodosAsync(CancellationToken ct)
+    public OverdueTodoSpec(DateTime asOfDate)
     {
-        var now = DateTime.UtcNow;
-        return await context.Todos
-            .Where(t => !t.IsCompleted && t.DueDate < now)
-            .ToListAsync(ct);
+        _asOfDate = asOfDate;
+    }
+
+    public override Expression<Func<Todo, bool>> ToExpression()
+    {
+        return todo => !todo.IsCompleted && todo.DueDate < _asOfDate;
     }
 }
+
+// Usage in service (pure FP - inject time via TimeIO trait):
+from now in Time<M, RT>.UtcNow
+from spec in M.Pure(new OverdueTodoSpec(now))
+from overdueTodos in TodoRepository<M, RT>.find(spec)  // ✅ Uses generated find method
+select overdueTodos;
+
+// ❌ AVOID: Custom repository methods break the pattern
+// Only use partial classes if you REALLY need database-specific optimizations
+// that can't be expressed as specifications (very rare!)
 ```
+
+**Why prefer Specifications over custom repository methods?**
+
+1. **Composable** - Can combine with other specifications using And/Or/Not
+2. **Testable** - Works identically in test (LINQ) and production (SQL)
+3. **Reusable** - One specification class can be used in many services
+4. **Consistent** - Follows the pattern established in SCALING-PATTERNS.md
+5. **Pure FP** - No hidden dependencies, inject time/random via traits
 
 ## Benefits
 
 ### 1. Massive Code Reduction
-- **Before:** ~140 lines per entity
-- **After:** ~10 lines per entity
-- **Savings:** 93% less boilerplate!
+- **Before:** ~150 lines per entity (interface + capability + test impl + live impl)
+- **After:** ~2 lines per entity (just annotations!)
+- **Savings:** 99% less boilerplate!
 
-### 2. Consistency
-- All repositories follow exact same pattern
-- No copy-paste errors
-- Changes propagate automatically
+### 2. Full SCALING-PATTERNS.md Alignment
+- ✅ **Specification Pattern** - Generated `FindAsync`/`find` methods work with specifications
+- ✅ **Pagination Pattern** - Generated `FindPagedAsync`/`findPaged` with sorting support
+- ✅ **Transaction Pattern** - Write methods don't save (Unit of Work handles saving)
+- ✅ **No custom queries** - Encourages composable specifications instead of repository explosion
+- ✅ **Pure FP** - All dependencies explicit (time, random, etc. via traits)
 
-### 3. Compile-Time Safety
-- Generated at compile-time (not runtime)
-- Full IntelliSense support
+### 3. Consistency Across All Entities
+- All repositories follow identical pattern
+- No copy-paste errors or drift
+- Changes to generator propagate automatically
+- Test and production implementations stay in sync
+
+### 4. Compile-Time Safety
+- Generated at compile-time (not runtime reflection)
+- Full IntelliSense support in IDE
 - Type-safe generated code
+- Errors caught at compile-time, not runtime
 
-### 4. Easy Maintenance
+### 5. Works Everywhere (Test & Production)
+- **Test:** LINQ to Objects (in-memory)
+- **Production:** EF Core (translates to SQL)
+- Same specification code works in both!
+- No mocking needed - real implementations in tests
+
+### 6. Easy Maintenance & Evolution
 - Change generator once, affects all entities
-- Pattern improvements apply everywhere
-- Refactoring made simple
+- Add new methods (e.g., bulk operations) to all repos at once
+- Refactoring is simple and safe
+- Pattern improvements apply everywhere instantly
 
-### 5. Developer Productivity
-- Add new entity in 5 minutes instead of 30
-- Focus on business logic, not boilerplate
-- Less context switching
+### 7. Developer Productivity
+- Add new entity in **5 minutes** instead of 30
+- Focus on domain logic and specifications, not boilerplate
+- Less context switching between files
+- New developers onboard faster (consistent pattern)
 
 ## Summary
 
-Source generators eliminate repository boilerplate:
+Source generators + Specification Pattern = Maximum leverage for multi-entity architectures:
 
-✅ **3 lines** to generate what used to take 140 lines
-✅ **Compile-time** code generation with full type safety
-✅ **Automatic** trait, capability, test, and live implementations
-✅ **Consistent** pattern across all entities
-✅ **Extensible** with partial classes for custom logic
-✅ **Productive** - add entities in minutes, not hours
+✅ **2 lines** (annotations) generate 150+ lines per entity<br/>
+✅ **Specification Pattern** - Composable, reusable query logic (from SCALING-PATTERNS.md)<br/>
+✅ **Pagination Pattern** - Efficient large dataset handling (from SCALING-PATTERNS.md)<br/>
+✅ **Transaction Pattern** - Unit of Work coordinates saves (from SCALING-PATTERNS.md)<br/>
+✅ **Compile-time** code generation with full type safety<br/>
+✅ **Automatic** trait, capability, test, and live implementations<br/>
+✅ **Consistent** pattern across all entities<br/>
+✅ **Pure FP** - No DateTime.UtcNow, inject dependencies via traits<br/>
+✅ **Testable** - Same code works with LINQ (test) and SQL (production)<br/>
 
 **For a project with 10 entities:**
-- **Manual:** ~1,400 lines of repetitive code
-- **Generated:** ~100 lines of attributes + 1 generator
-- **Time saved:** Hours → Minutes
+- **Manual approach:** ~1,500 lines of repetitive repository code + 500 lines of specifications
+- **Generated approach:** ~20 lines of annotations + 500 lines of specifications + 1 generator
+- **Code saved:** ~1,480 lines (98.7% reduction in boilerplate!)
+- **Time saved:** 5 hours → 30 minutes for initial setup
 
-This is the power of meta-programming in functional architecture!
+**Key insight:** Generate the **mechanical parts** (repository infrastructure), write the **logic parts** (specifications) by hand. Specifications are reusable domain knowledge worth writing. Repository boilerplate is not.
+
+This is the power of combining meta-programming (source generators) with functional patterns (specifications, traits, monads) for scalable, maintainable architecture!
