@@ -167,18 +167,22 @@ export function useRunEffect<A, E, R>(
     // Create effect and auto-provide layer from context
     const effect = effectRef.current().pipe(Effect.provide(layer));
 
+    // ✅ Functional: Use Exit.match
     Effect.runPromiseExit(effect).then(exit => {
       if (cancelled) return;
 
-      if (Exit.isSuccess(exit)) {
-        setData(exit.value);
-        setError(null);
-      } else {
-        setError(exit.cause.failureOrCause as E);
-        setData(null);
-      }
-
-      setLoading(false);
+      Exit.match(exit, {
+        onFailure: (cause) => {
+          setError(cause.failureOrCause as E);
+          setData(null);
+          setLoading(false);
+        },
+        onSuccess: (value) => {
+          setData(value);
+          setError(null);
+          setLoading(false);
+        }
+      });
     });
 
     return () => {
@@ -234,6 +238,29 @@ function TodoCount() {
 
 ### 10.2.2 Solution: Global Store with Effect
 
+> **💡 Functional Pattern**: ในส่วนนี้เราใช้ `Effect.matchEffect` แทน `if-else` เพื่อให้โค้ดเป็น **declarative** และ **type-safe** มากขึ้น
+
+**Pattern เปรียบเทียบ:**
+
+```typescript
+// ❌ Imperative style with if-else
+const result = yield* _(Effect.either(someEffect));
+if (result._tag === 'Right') {
+  // handle success
+} else {
+  // handle error
+}
+
+// ✅ Functional style with Effect.matchEffect
+yield* _(
+  someEffect,
+  Effect.matchEffect({
+    onFailure: (error) => handleError(error),
+    onSuccess: (value) => handleSuccess(value)
+  })
+);
+```
+
 **src/store/TodoStore.ts:**
 
 ```typescript
@@ -276,30 +303,25 @@ export const makeTodoStore = Effect.gen(function* (_) {
       }))
     );
 
-    // Fetch todos
-    const result = yield* _(
-      Effect.either(TodoEffects.fetchAllTodos)
+    // ✅ Functional: Use Effect.matchEffect
+    yield* _(
+      TodoEffects.fetchAllTodos,
+      Effect.matchEffect({
+        onFailure: (error) =>
+          SubscriptionRef.update(stateRef, state => ({
+            ...state,
+            loading: false,
+            error
+          })),
+        onSuccess: (todos) =>
+          SubscriptionRef.update(stateRef, state => ({
+            ...state,
+            todos,
+            loading: false,
+            error: null
+          }))
+      })
     );
-
-    // Update state based on result
-    if (result._tag === 'Right') {
-      yield* _(
-        SubscriptionRef.update(stateRef, state => ({
-          ...state,
-          todos: result.right,
-          loading: false,
-          error: null
-        }))
-      );
-    } else {
-      yield* _(
-        SubscriptionRef.update(stateRef, state => ({
-          ...state,
-          loading: false,
-          error: result.left
-        }))
-      );
-    }
   });
 
   /**
@@ -335,21 +357,24 @@ export const makeTodoStore = Effect.gen(function* (_) {
         }))
       );
 
-      // Call API
-      const result = yield* _(Effect.either(TodoEffects.toggleTodo(id)));
-
-      // Revert if failed
-      if (result._tag === 'Left') {
-        yield* _(
-          SubscriptionRef.update(stateRef, state => ({
-            ...state,
-            todos: state.todos.map(t =>
-              t.id === id ? { ...t, completed: !t.completed } : t
-            ),
-            error: result.left
-          }))
-        );
-      }
+      // ✅ Functional: Use Effect.matchEffect
+      yield* _(
+        TodoEffects.toggleTodo(id),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            // Revert optimistic update on error
+            SubscriptionRef.update(stateRef, state => ({
+              ...state,
+              todos: state.todos.map(t =>
+                t.id === id ? { ...t, completed: !t.completed } : t
+              ),
+              error
+            })),
+          onSuccess: () =>
+            // Success - keep optimistic update
+            Effect.succeed(undefined)
+        })
+      );
     });
 
   /**
@@ -357,9 +382,10 @@ export const makeTodoStore = Effect.gen(function* (_) {
    */
   const deleteTodo = (id: string) =>
     Effect.gen(function* (_) {
-      // Optimistic update
+      // Save previous state for rollback
       const previousTodos = (yield* _(SubscriptionRef.get(stateRef))).todos;
 
+      // Optimistic update
       yield* _(
         SubscriptionRef.update(stateRef, state => ({
           ...state,
@@ -367,19 +393,22 @@ export const makeTodoStore = Effect.gen(function* (_) {
         }))
       );
 
-      // Call API
-      const result = yield* _(Effect.either(TodoEffects.deleteTodo(id)));
-
-      // Revert if failed
-      if (result._tag === 'Left') {
-        yield* _(
-          SubscriptionRef.update(stateRef, state => ({
-            ...state,
-            todos: previousTodos,
-            error: result.left
-          }))
-        );
-      }
+      // ✅ Functional: Use Effect.matchEffect
+      yield* _(
+        TodoEffects.deleteTodo(id),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            // Revert on error
+            SubscriptionRef.update(stateRef, state => ({
+              ...state,
+              todos: previousTodos,
+              error
+            })),
+          onSuccess: () =>
+            // Success - keep optimistic update
+            Effect.succeed(undefined)
+        })
+      );
     });
 
   /**
@@ -697,30 +726,30 @@ export function useForm<T extends Record<string, any>>({
       setState(prev => ({ ...prev, submitting: true, errors: {} }));
 
       try {
-        // Validate
-        const validationResult = await Effect.runPromise(
-          Effect.either(validate(state.values))
+        // ✅ Functional: Use Effect.matchEffect for validation
+        await Effect.runPromise(
+          validate(state.values).pipe(
+            Effect.matchEffect({
+              onFailure: (fieldErrors) =>
+                Effect.sync(() => {
+                  // Validation failed
+                  const errors = fieldErrors.reduce(
+                    (acc, err) => ({ ...acc, [err.field]: err.message }),
+                    {} as Record<keyof T, string>
+                  );
+
+                  setState(prev => ({
+                    ...prev,
+                    errors,
+                    submitting: false
+                  }));
+                }),
+              onSuccess: (validValues) =>
+                // Submit with valid values
+                onSubmit(validValues)
+            })
+          )
         );
-
-        if (validationResult._tag === 'Left') {
-          // Validation failed
-          const errors = validationResult.left.reduce(
-            (acc, err) => ({ ...acc, [err.field]: err.message }),
-            {} as Record<keyof T, string>
-          );
-
-          setState(prev => ({
-            ...prev,
-            errors,
-            submitting: false
-          }));
-
-          return;
-        }
-
-        // Submit
-        const validValues = validationResult.right;
-        await Effect.runPromise(onSubmit(validValues));
 
         // Reset form on success
         setState({
@@ -1120,16 +1149,19 @@ const toggleTodoOptimistic = (id: string, currentCompleted: boolean) =>
         Effect.gen(function* (_) {
           const api = yield* _(TodoApi);
 
-          // 2. Call API
-          const result = yield* _(Effect.either(api.toggle(id)));
-
-          // 3. If failed, revert
-          if (result._tag === 'Left') {
-            yield* _(logger.error('Failed to toggle, reverting', result.left));
-            // Revert logic here
-          } else {
-            yield* _(logger.info('Toggle confirmed by server'));
-          }
+          // ✅ Functional: Use Effect.matchEffect
+          yield* _(
+            api.toggle(id),
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Effect.gen(function* (_) {
+                  yield* _(logger.error('Failed to toggle, reverting', error));
+                  // Revert logic here
+                }),
+              onSuccess: () =>
+                logger.info('Toggle confirmed by server')
+            })
+          );
         })
       )
     );
