@@ -47,6 +47,24 @@ const handleCreate = async (request: CreateTodoRequest) => {
 
 ### 10.1.2 Solution: Effect Context Provider
 
+แทนที่จะ provide layer ทุกครั้ง เราจะใช้ **React Context Pattern** เพื่อ:
+
+1. **Centralize Layer Management** - จัดการ layer ที่เดียว
+2. **Auto Provision** - Hooks ดึง layer จาก context อัตโนมัติ
+3. **Easy Testing** - เปลี่ยน layer แค่ที่ Provider เดียว
+
+**แนวคิด:**
+
+```
+App (EffectProvider with AppLayerLive)
+  ↓
+  Components ใช้ useEffectLayer() → ได้ AppLayerLive อัตโนมัติ
+  ↓
+  ไม่ต้อง Effect.provide(AppLayer) เอง!
+```
+
+**Implementation:**
+
 **src/contexts/EffectContext.tsx:**
 
 ```typescript
@@ -127,6 +145,29 @@ export default App;
 ```
 
 ### 10.1.3 ปรับปรุง Hooks ให้ใช้ Context
+
+ตอนนี้เราจะปรับปรุง `useRunEffect` ให้ดึง layer จาก context อัตโนมัติ แทนที่จะให้ user ส่งมาเอง
+
+**การเปลี่ยนแปลง:**
+
+1. เพิ่ม `const layer = useEffectLayer()` - ดึง layer จาก context
+2. Auto-provide layer - `Effect.provide(layer)` ทำอัตโนมัติภายใน hook
+3. User ไม่ต้องส่ง layer เข้ามา
+
+**ก่อนปรับปรุง:**
+```typescript
+// ❌ User ต้อง provide เอง
+const { data } = useRunEffect(
+  () => fetchAllTodos.pipe(Effect.provide(AppLayer)),
+  []
+);
+```
+
+**หลังปรับปรุง:**
+```typescript
+// ✅ Hook provide ให้อัตโนมัติ
+const { data } = useRunEffect(() => fetchAllTodos, []);
+```
 
 **src/hooks/useRunEffect.ts (ปรับปรุง):**
 
@@ -237,6 +278,30 @@ function TodoCount() {
 3. Loading states แยกกัน
 
 ### 10.2.2 Solution: Global Store with Effect
+
+เราจะสร้าง **Global Store** โดยใช้ `SubscriptionRef` จาก Effect-TS ซึ่งมีคุณสมบัติ:
+
+1. **Reactive State** - Components subscribe ได้ จะ update อัตโนมัติเมื่อ state เปลี่ยน
+2. **Type-Safe** - State และ operations มี type ชัดเจน
+3. **Effect Integration** - ทำงานร่วมกับ Effect-TS ได้ดี
+4. **Optimistic Updates** - Update UI ก่อน รอ API ทีหลัง
+
+**Architecture:**
+
+```
+TodoStore (SubscriptionRef<TodoStoreState>)
+  ↓
+  Operations: load, create, toggle, delete
+  ↓
+  Components subscribe → Auto re-render เมื่อ state เปลี่ยน
+```
+
+**Key Concepts:**
+
+- `SubscriptionRef` = Mutable state + Observable pattern
+- `SubscriptionRef.update` = Update state
+- `SubscriptionRef.get` = Get current state
+- `SubscriptionRef.changes` = Subscribe to changes (Stream)
 
 > **💡 Functional Pattern**: ในส่วนนี้เราใช้ `Effect.matchEffect` แทน `if-else` เพื่อให้โค้ดเป็น **declarative** และ **type-safe** มากขึ้น
 
@@ -543,6 +608,19 @@ export function useTodoStoreState(): TodoStoreState {
 
 ### 10.2.3 ใช้งาน Global Store
 
+ตอนนี้เรามี TodoStore แล้ว เราจะสร้าง **Context Provider** เพื่อให้ทุก component เข้าถึง store ได้
+
+**Pattern:**
+
+1. Wrap app ด้วย `TodoStoreProvider`
+2. Components ใช้ `useTodoStore()` เพื่อเข้าถึง store operations
+3. Components ใช้ `useTodoStoreState()` เพื่อ subscribe state changes
+
+**ข้อดี:**
+- ✅ Fetch ครั้งเดียว แชร์ state กันได้
+- ✅ Components sync กันอัตโนมัติ
+- ✅ Optimistic updates ทำงานทุก component
+
 **src/App.tsx:**
 
 ```typescript
@@ -650,6 +728,40 @@ export function TodoStats() {
 ## 10.3 Form Handling & Validation
 
 ### 10.3.1 Form State with Effect
+
+Forms เป็นส่วนสำคัญของ web apps แต่การจัดการ form state, validation, และ errors มักซับซ้อน
+
+เราจะสร้าง **custom hook `useForm`** ที่:
+
+1. **Manage Form State** - values, errors, touched, submitting
+2. **Validate with Effect** - ใช้ Effect สำหรับ validation (support async)
+3. **Type-Safe Errors** - Error types ชัดเจน (field-level errors)
+4. **Submit with Effect** - Submit ผ่าน Effect pipeline
+
+**Form State:**
+
+```typescript
+interface FormState<T> {
+  values: T              // Form values
+  errors: Record<keyof T, string>  // Field errors
+  touched: Record<keyof T, boolean> // Touched fields
+  submitting: boolean    // Submitting state
+}
+```
+
+**Flow:**
+
+```
+1. User fills form
+   ↓
+2. validate(values) → Effect<ValidValues, FieldError[]>
+   ↓
+3. If valid → onSubmit(validValues)
+   ↓
+4. If invalid → Show errors
+```
+
+**Implementation:**
 
 **src/hooks/useForm.ts:**
 
@@ -797,6 +909,34 @@ export function useForm<T extends Record<string, any>>({
 
 ### 10.3.2 Validation with Effect
 
+Validation กับ Effect-TS ทำให้เราสามารถ:
+
+1. **Compose Validation Rules** - รวม rules หลายๆตัวได้
+2. **Async Validation** - เช่น check uniqueness จาก API
+3. **Type-Safe Errors** - Error types ชัดเจน
+4. **Collect All Errors** - รวม errors ทั้งหมดแล้ว return ครั้งเดียว
+
+**Validation Pattern:**
+
+```typescript
+// 1. Check แต่ละ field
+const errors: FieldError[] = [];
+
+if (invalid) errors.push({ field, message });
+
+// 2. Return errors หรือ valid values
+if (errors.length > 0) {
+  return Effect.fail(errors);  // Validation failed
+}
+
+return Effect.succeed(values);  // Validation passed
+```
+
+**Benefits:**
+- ✅ รวม errors ทั้งหมด แสดงพร้อมกัน (ไม่ใช่ทีละ field)
+- ✅ Async validation support (check กับ API)
+- ✅ Type-safe error handling
+
 **src/validation/todoValidation.ts:**
 
 ```typescript
@@ -880,6 +1020,20 @@ export const validateUniqueTodoTitle = (
 ```
 
 ### 10.3.3 Form Component
+
+ตอนนี้เรามี `useForm` hook และ validation functions แล้ว มาดูวิธีใช้งานใน React component
+
+**Key Points:**
+
+1. **Initialize form** - ส่ง initialValues, validate, onSubmit
+2. **Bind inputs** - `value={form.values.field}` + `onChange={e => form.setValue('field', e.target.value)}`
+3. **Show errors** - แสดง error เมื่อ field ถูก touched
+4. **Submit** - เรียก `form.handleSubmit` เมื่อ submit form
+
+**Visual feedback:**
+- `form.submitting` - Disable inputs ขณะ submit
+- `form.errors` - แสดง error messages
+- `form.touched` - แสดง error เฉพาะ field ที่ user แตะแล้ว
 
 **src/components/CreateTodoForm.tsx:**
 
@@ -1013,6 +1167,33 @@ export function CreateTodoForm() {
 
 ### 10.4.1 Effect Error Boundary
 
+React Error Boundaries จับ errors ที่เกิดใน component tree แต่ไม่จับ async errors (เช่น จาก Effect)
+
+เราจะสร้าง **Effect Error Boundary** ที่:
+
+1. **Catch Effect Errors** - จับ errors จาก Effect operations
+2. **Type-Specific Fallback** - แสดง UI ต่างกันตาม error type
+3. **Recovery Mechanism** - มี reset button เพื่อ retry
+4. **Error Logging** - Log errors สำหรับ monitoring
+
+**Pattern:**
+
+```
+Component throws error
+  ↓
+ErrorBoundary catches
+  ↓
+componentDidCatch → call onError callback
+  ↓
+Show fallback UI with retry button
+```
+
+**Benefits:**
+- ✅ Prevent white screen of death
+- ✅ User-friendly error messages
+- ✅ Recovery mechanism
+- ✅ Error tracking
+
 **src/components/EffectErrorBoundary.tsx:**
 
 ```typescript
@@ -1129,7 +1310,32 @@ function App() {
 
 ## 10.5 Optimistic Updates Pattern
 
+**Optimistic Updates** คือการ update UI ทันทีโดยไม่รอ API response เพื่อให้ UX ดีขึ้น
+
+**แนวคิด:**
+
+```
+1. User click → Update UI ทันที (optimistic)
+2. Call API in background
+3. If success → Keep update
+4. If error → Revert update + Show error
+```
+
+**Benefits:**
+- ✅ Instant feedback - UI responsive
+- ✅ Better UX - ไม่ต้องรอ loading
+- ✅ Handle errors - Revert เมื่อ fail
+
+**Trade-offs:**
+- ⚠️ Complexity - ต้องจัดการ rollback
+- ⚠️ Consistency - UI อาจไม่ตรงกับ server ชั่วขณะ
+
 ### 10.5.1 Simple Optimistic Update
+
+วิธีง่ายๆคือ:
+1. Update UI ทันที
+2. Fork effect (run in background)
+3. Revert ถ้า error
 
 ```typescript
 /**
@@ -1169,6 +1375,27 @@ const toggleTodoOptimistic = (id: string, currentCompleted: boolean) =>
 ```
 
 ### 10.5.2 Advanced Optimistic Update with Rollback
+
+สำหรับ optimistic updates ที่ซับซ้อน เราต้องการ:
+
+1. **Save Previous State** - เก็บค่าเดิมไว้ rollback
+2. **Apply Optimistic Update** - Update ทันที
+3. **Track Pending State** - แสดงว่ากำลัง pending
+4. **Rollback on Error** - คืนค่าเดิมถ้า error
+
+เราจะสร้าง **custom hook `useOptimisticUpdate`** ที่จัดการทั้งหมดนี้
+
+**Pattern:**
+
+```typescript
+1. previousValue = currentValue    // Backup
+2. currentValue = update(currentValue)  // Optimistic
+3. pending = true
+4. Call API
+5. If success: confirm
+   If error: currentValue = previousValue  // Rollback
+6. pending = false
+```
 
 **src/hooks/useOptimisticUpdate.ts:**
 
@@ -1283,7 +1510,35 @@ function TodoItem({ todo }: { todo: Todo }) {
 
 ## 10.6 Real-time Updates with WebSocket
 
+Real-time updates ช่วยให้ app sync กับ server แบบ real-time โดยไม่ต้อง polling
+
+**Use Cases:**
+- Chat applications
+- Collaborative editing
+- Live notifications
+- Todo updates จาก users อื่น
+
+เราจะใช้ **WebSocket** กับ Effect-TS เพื่อ:
+1. **Type-Safe Messages** - Message types ชัดเจน
+2. **Stream Processing** - ใช้ Stream API ของ Effect
+3. **Automatic Reconnection** - Reconnect เมื่อ disconnect
+4. **Error Handling** - จัดการ errors อย่างเป็นระบบ
+
 ### 10.6.1 WebSocket Service
+
+เราจะสร้าง WebSocket service ที่ wrap native WebSocket API ด้วย Effect
+
+**Service Interface:**
+
+1. `connect(url)` - Connect to WebSocket server
+2. `send(message)` - Send message
+3. `messages` - Stream of incoming messages
+4. `disconnect()` - Close connection
+
+**Key Points:**
+- ใช้ `Queue` เพื่อ buffer messages
+- ใช้ `Stream` เพื่อ process messages
+- ใช้ `Ref` เพื่อเก็บ WebSocket instance
 
 **src/services/WebSocketService.ts:**
 
@@ -1401,6 +1656,27 @@ export const WebSocketServiceLive = Layer.effect(
 
 ### 10.6.2 Real-time Todo Updates
 
+ตอนนี้เรามี WebSocket service แล้ว มาสร้าง custom hook เพื่อ subscribe todo updates แบบ real-time
+
+**Flow:**
+
+```
+1. Connect to WebSocket server
+   ↓
+2. Subscribe to messages stream
+   ↓
+3. Match message type (created/updated/deleted)
+   ↓
+4. Reload todos from store
+   ↓
+5. Cleanup: disconnect on unmount
+```
+
+**Benefits:**
+- ✅ Auto sync - ได้รับ updates จาก users อื่น
+- ✅ Type-safe - Message types ชัดเจน
+- ✅ Automatic cleanup - Disconnect เมื่อ unmount
+
 **src/hooks/useRealtimeTodos.ts:**
 
 ```typescript
@@ -1492,7 +1768,34 @@ function TodoApp() {
 
 ## 10.7 Performance Optimization
 
+React apps ที่ใช้ Effect-TS ต้องระวังเรื่อง performance เพราะ:
+
+1. **Effect Creation Cost** - Creating effects มีต้นทุน
+2. **Re-render Issues** - Effects ใหม่ทุก render → re-fetch ข้อมูล
+3. **Memory Leaks** - Subscriptions ที่ไม่ cleanup
+
+เราจะเรียนรู้ techniques เพื่อ optimize performance
+
 ### 10.7.1 Memoize Effects
+
+**ปัญหา:** Creating effect ใหม่ทุก render
+
+```typescript
+// ❌ Bad: สร้าง effect ใหม่ทุก render
+function TodoList({ filter }) {
+  const { data } = useRunEffect(
+    () => getTodosWithStats(filter),  // ← Function ใหม่ทุก render!
+    [filter]
+  );
+}
+```
+
+**ผลกระทบ:**
+- Effect ถูกสร้างใหม่ทุก render
+- `useRunEffect` detect deps change → re-run effect
+- Fetch ข้อมูลซ้ำโดยไม่จำเป็น
+
+**Solution:** ใช้ `useMemo` เพื่อ cache effect
 
 ```typescript
 import { useMemo } from 'react';
@@ -1516,6 +1819,33 @@ function TodoList({ filter }: { filter: TodoFilter }) {
 ```
 
 ### 10.7.2 Debounce API Calls
+
+**ปัญหา:** User พิมพ์ search → API call ทุกตัวอักษร
+
+```typescript
+// ❌ Bad: API call ทุกครั้งที่ user พิมพ์
+function SearchTodos() {
+  const [query, setQuery] = useState('');
+
+  const { data } = useRunEffect(
+    () => searchTodos(query),  // ← Call API ทุกตัวอักษร!
+    [query]
+  );
+}
+```
+
+**ผลกระทบ:**
+- User พิมพ์ "hello" → 5 API calls
+- Server overload
+- Slow UX
+
+**Solution:** Debounce - รอ user หยุดพิมพ์แล้วค่อย call API
+
+**Debounce Pattern:**
+```
+User พิมพ์: h-e-l-l-o
+Debounce:   ----[wait]----[call API with "hello"]
+```
 
 **src/hooks/useDebounced.ts:**
 
@@ -1566,6 +1896,33 @@ function SearchTodos() {
 
 ### 10.7.3 Parallel Requests
 
+**ปัญหา:** Fetch หลาย resources แบบ sequential (ทีละตัว)
+
+```typescript
+// ❌ Bad: Sequential - ช้า
+const loadDashboard = Effect.gen(function* (_) {
+  const todos = yield* _(fetchTodos());    // 1s
+  const stats = yield* _(fetchStats());    // 1s
+  const profile = yield* _(fetchProfile()); // 1s
+  return { todos, stats, profile };        // Total: 3s
+});
+```
+
+**ผลกระทบ:**
+- รอ todos เสร็จก่อนจึงเริ่ม stats
+- รอ stats เสร็จก่อนจึงเริ่ม profile
+- Total time = 3 seconds
+
+**Solution:** ใช้ `Effect.all` เพื่อ fetch แบบ parallel
+
+**Parallel Pattern:**
+```
+Sequential: [todos]--[stats]--[profile] = 3s
+Parallel:   [todos]
+            [stats]  } concurrent = 1s
+            [profile]
+```
+
 ```typescript
 import { Effect } from 'effect';
 
@@ -1591,6 +1948,32 @@ const loadDashboard = Effect.gen(function* (_) {
 
 ### 10.7.4 React.memo for Components
 
+**ปัญหา:** Component re-render แม้ props ไม่เปลี่ยน
+
+```typescript
+// ❌ Bad: Re-render ทุกครั้งที่ parent re-render
+function TodoItem({ todo, onToggle }) {
+  console.log('Render TodoItem:', todo.id);
+  // Component นี้ render ซ้ำแม้ props ไม่เปลี่ยน!
+}
+
+// Parent re-render → TodoItem ทั้งหมด re-render
+function TodoList({ todos }) {
+  const [filter, setFilter] = useState('all');
+
+  return todos.map(todo =>
+    <TodoItem todo={todo} onToggle={handleToggle} />
+  );
+}
+```
+
+**ผลกระทบ:**
+- Filter เปลี่ยน → TodoList re-render
+- TodoItem ทั้งหมด re-render แม้ props ไม่เปลี่ยน
+- Slow performance เมื่อมี todos เยอะ
+
+**Solution:** ใช้ `React.memo` เพื่อ skip re-render เมื่อ props เท่าเดิม
+
 ```typescript
 import React, { memo } from 'react';
 
@@ -1614,7 +1997,34 @@ export const TodoItem = memo(function TodoItem({ todo, onToggle }: TodoItemProps
 
 ## 10.8 Testing React + Effect
 
+Testing React components ที่ใช้ Effect-TS มี challenges:
+
+1. **Async Operations** - Effects เป็น async
+2. **Dependencies** - ต้อง provide layers
+3. **Side Effects** - ต้อง mock services
+
+**Testing Strategy:**
+
+```
+1. Create mock layers → replace real services
+2. Wrap component with EffectProvider (mock layer)
+3. Render component
+4. Assert behavior
+```
+
+**Benefits:**
+- ✅ Isolate components - ไม่ต้องเรียก API จริง
+- ✅ Fast tests - Mock data instant
+- ✅ Deterministic - ผลลัพธ์เหมือนเดิมทุกครั้ง
+
 ### 10.8.1 Testing Components with Mock Layer
+
+เราจะ test TodoList component โดย:
+
+1. **Create TestTodoApi** - Mock layer ที่ return test data
+2. **Wrap with EffectProvider** - ส่ง TestTodoApi เข้าไป
+3. **Wait for data** - ใช้ `waitFor` รอ component render
+4. **Assert** - ตรวจสอบว่าแสดง todos ถูกต้อง
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -1687,6 +2097,17 @@ describe('TodoList', () => {
 ```
 
 ### 10.8.2 Testing Hooks
+
+Testing custom hooks ที่ใช้ Effect-TS ต้องใช้ `renderHook` จาก testing library
+
+**Pattern:**
+
+1. **renderHook** - Render hook ใน test environment
+2. **Provide context** - Wrap ด้วย EffectProvider
+3. **Wait for result** - ใช้ `waitFor` รอ effect เสร็จ
+4. **Assert** - ตรวจสอบ `result.current`
+
+**Example: Testing useRunEffect**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
