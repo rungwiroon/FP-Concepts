@@ -4,16 +4,550 @@
 
 ---
 
-## 2.1 Pure Functions - หัวใจของ Functional Programming
+## 2.1 ความนิยมของ Functional Programming
 
-### 2.1.1 คำนิยาม
+### 2.1.1 FP ในปัจจุบัน
+
+Functional Programming กำลังได้รับความนิยมเพิ่มขึ้นอย่างต่อเนื่องในช่วง 10 ปีที่ผ่านมา โดยเฉพาะในระบบที่ต้องการ:
+- **ความน่าเชื่อถือสูง** (High Reliability)
+- **การประมวลผลแบบ Concurrent/Parallel**
+- **การจัดการ Business Logic ที่ซับซ้อน**
+
+### 2.1.2 FP ในอุตสาหกรรม
+
+**FinTech (การเงิน):**
+- **Jane Street** (Trading firm) - ใช้ OCaml สร้างระบบ Trading
+- **Standard Chartered Bank** - ใช้ Haskell สร้างระบบ Banking
+- เหตุผล: Type Safety + Pure Functions = ลด bugs ในระบบที่ต้องการความแม่นยำสูง
+
+**E-commerce:**
+- **Amazon** - ใช้ Scala สำหรับ backend services หลายส่วน
+- **Zalando** (E-commerce ยุโรป) - ใช้ Scala + Cats Effect
+- เหตุผล: Immutability + Concurrent Processing = จัดการ traffic สูงได้ดี
+
+**Enterprise Software:**
+- **Microsoft** - F# สำหรับ Azure services บางส่วน
+- **Walmart** - Clojure สำหรับ backend systems
+- **Facebook/Meta** - ใช้ Hack (ภาษาที่มี FP features)
+- เหตุผล: Pure Functions = ทดสอบง่าย + maintain ง่าย
+
+### 2.1.3 Libraries และ Frameworks ที่นิยม
+
+**Backend:**
+- **C#**: language-ext, OneOf
+- **Java**: Vavr, Cyclops
+- **Scala**: Cats, ZIO, Cats Effect
+- **JavaScript/Node.js**: Ramda, Effect-TS
+- **Kotlin**: Arrow
+
+**Frontend:**
+- **React/Redux** - ใช้ immutability และ pure functions
+- **Elm** - Pure FP สำหรับ web
+- **ReScript** (ชื่อเดิม ReasonML) - FP บน JavaScript
+- **TypeScript + Effect-TS** - Type-safe effects
+
+### 2.1.4 แนวโน้ม
+
+FP กำลังถูกนำมาใช้ใน mainstream languages มากขึ้น:
+- **C# 9+**: Records, pattern matching, with expressions
+- **Java 8+**: Lambdas, Streams, Optional
+- **Python 3+**: Type hints, dataclasses, functools
+- **TypeScript**: Union types, discriminated unions, readonly
+
+---
+
+## 2.2 งานที่เหมาะและไม่เหมาะกับ FP
+
+### 2.2.1 งานที่เหมาะกับ FP ⭐
+
+#### 1. **Data Transformation และ Processing**
+
+FP เหมาะมากสำหรับการแปลงข้อมูล เพราะ pure functions + immutability:
+
+**ตัวอย่าง:**
+```csharp
+// ETL (Extract, Transform, Load) Pipeline
+var processedOrders =
+    from order in rawOrders
+    where order.Status == "pending"
+    let validated = ValidateOrder(order)
+    where validated.IsValid
+    select TransformToDto(validated.Order);
+```
+
+**Use Cases:**
+- ETL pipelines
+- Data analytics
+- Report generation
+- API response transformations
+
+#### 2. **Business Logic และ Domain Logic**
+
+Business rules มักเป็น pure functions - input เดียวกันให้ output เดียวกัน:
+
+**ตัวอย่าง:**
+```typescript
+// คำนวณส่วนลด - pure function
+function calculateDiscount(
+  orderTotal: number,
+  customerType: CustomerType,
+  promoCode: Option<string>
+): number {
+  // Business logic ที่ทดสอบได้ง่าย
+}
+```
+
+**Use Cases:**
+- Pricing calculations
+- Validation rules
+- Business workflows
+- Rule engines
+
+#### 3. **Concurrent และ Parallel Processing**
+
+Pure functions ไม่มี shared state ทำให้ปลอดภัยกับ concurrency:
+
+**ตัวอย่าง:**
+```csharp
+// ประมวลผล orders หลายล้านตัวพร้อมกัน
+var results = orders
+    .AsParallel()
+    .Select(ProcessOrder)  // Pure - ปลอดภัย!
+    .ToList();
+```
+
+**Use Cases:**
+- Big data processing
+- Batch jobs
+- Stream processing (Kafka, Kinesis)
+- Distributed computing
+
+#### 4. **Validation และ Form Processing**
+
+Validation เหมาะกับ FP เพราะต้องการรวบรวม errors:
+
+**ตัวอย่าง:**
+```csharp
+// Validation<Error, T> รวม errors ทั้งหมด
+var validated =
+    (ValidateEmail(input.Email),
+     ValidateName(input.Name),
+     ValidateAge(input.Age))
+    .Apply((e, n, a) => new User(e, n, a));
+```
+
+**Use Cases:**
+- Form validation
+- API input validation
+- Configuration validation
+- Data migration validation
+
+#### 5. **API และ Backend Services**
+
+FP ช่วยให้ API มี predictability และทดสอบง่าย:
+
+**Use Cases:**
+- RESTful APIs
+- GraphQL resolvers
+- Microservices
+- Serverless functions (AWS Lambda, Azure Functions)
+
+### 2.2.2 งานที่ไม่เหมาะกับ FP (หรือยาก) ⚠
+
+#### 1. **Real-time Systems ที่ต้องการ Performance สูงมาก**
+
+**เหตุผล:**
+- Immutability สร้าง object ใหม่บ่อย → GC overhead
+- Pure functions อาจไม่เหมาะกับ low-latency requirements
+
+**ตัวอย่าง:**
+- Game engines (Unity, Unreal) - ต้องการ mutable state เพื่อ performance
+- High-frequency trading systems
+- Real-time audio/video processing
+
+**หมายเหตุ:** ยังสามารถใช้ FP ได้ในส่วนอื่นของระบบ เช่น business logic, configuration
+
+#### 2. **Low-level Hardware Programming**
+
+**เหตุผล:**
+- ต้องการควบคุม memory โดยตรง
+- Immutability ไม่เหมาะกับ hardware constraints
+
+**ตัวอย่าง:**
+- Device drivers
+- Embedded systems (IoT devices ที่มี RAM น้อย)
+- Operating system kernels
+
+#### 3. **Complex Mutable UI State**
+
+**เหตุผล:**
+- UI มี state เยอะและเปลี่ยนบ่อย
+- Immutability อาจทำให้ซับซ้อนเกินไป
+
+**ตัวอย่าง:**
+- Complex desktop applications (WPF, WinForms)
+- Rich text editors
+- Canvas-based graphics applications
+
+**ทางเลือก:**
+- ใช้ FP สำหรับ business logic
+- ใช้ OOP/Imperative สำหรับ UI state management
+- ใช้ frameworks ที่รองรับ immutability (React, Elm)
+
+#### 4. **Legacy Code ที่ใหญ่มาก**
+
+**เหตุผล:**
+- Refactor codebase ใหญ่ไปสู่ FP ต้องใช้เวลาและทรัพยากรมาก
+- Team ต้องเรียนรู้ paradigm ใหม่
+
+**แนวทาง:**
+- Incremental adoption: เริ่มจาก modules ใหม่
+- Strangler Fig pattern: ค่อยๆ แทนที่ code เก่า
+
+### 2.2.3 กรณีที่ควรใช้ Hybrid Approach
+
+**ใช้ FP สำหรับ Core Logic + Imperative สำหรับ Effects:**
+
+```csharp
+// ✅ Pure business logic
+public static User ValidateAndCreateUser(string email, string name, DateTime now)
+{
+    // Pure functions ที่ทดสอบง่าย
+}
+
+// Imperative shell - จัดการ side effects
+public async Task<Result<User>> CreateUserApi(CreateUserRequest request)
+{
+    try
+    {
+        var user = ValidateAndCreateUser(request.Email, request.Name, DateTime.UtcNow);
+        await db.SaveAsync(user);
+        logger.Log($"User created: {user.Email}");
+        return Result.Success(user);
+    }
+    catch (Exception ex)
+    {
+        return Result.Failure(ex);
+    }
+}
+```
+
+**Functional Core, Imperative Shell:**
+- Core = Pure FP (business logic, calculations)
+- Shell = Imperative (I/O, database, logging)
+
+---
+
+## 2.3 ภาษาที่รองรับ Functional Programming
+
+### 2.3.1 Pure Functional Languages
+
+ภาษาที่ออกแบบมาเพื่อ FP โดยเฉพาะ:
+
+#### **Haskell**
+```haskell
+-- Pure FP - ทุกอย่างเป็น immutable และ lazy evaluation
+fibonacci :: Int -> Int
+fibonacci 0 = 0
+fibonacci 1 = 1
+fibonacci n = fibonacci (n-1) + fibonacci (n-2)
+
+-- Type classes และ Monads ถูกนำมาจาก Haskell
+```
+
+**จุดเด่น:**
+- Pure ที่สุด - แยก side effects ออกจาก pure functions อย่างเคร่งครัด
+- Lazy evaluation
+- Type system ทรงพลัง
+- Monad และ concepts ต่างๆ มาจาก Haskell
+
+**ใช้ในงาน:**
+- FinTech (Jane Street, Standard Chartered)
+- Compilers (GHC, PureScript compiler)
+- Research
+
+#### **F#**
+```fsharp
+// FP on .NET platform
+let calculatePrice quantity price discount =
+    let subtotal = quantity * price
+    subtotal * (1.0 - discount)
+
+// Discriminated Unions
+type PaymentMethod =
+    | Cash
+    | CreditCard of cardNumber: string
+    | BankTransfer of accountNumber: string
+```
+
+**จุดเด่น:**
+- FP บน .NET → ใช้ร่วมกับ C# ได้
+- Syntax สะอาด เรียนรู้ง่ายกว่า Haskell
+- Type inference ดี
+- Railway Oriented Programming
+
+**ใช้ในงาน:**
+- .NET backend services
+- Data science
+- Financial modeling
+
+#### **Elm**
+```elm
+-- Pure FP สำหรับ Web Frontend
+view : Model -> Html Msg
+view model =
+    div []
+        [ h1 [] [ text model.title ]
+        , button [ onClick Increment ] [ text "+1" ]
+        ]
+```
+
+**จุดเด่น:**
+- No runtime exceptions! (Compiler จับ errors ทั้งหมด)
+- เหมาะสำหรับ web frontend
+- The Elm Architecture (ต้นแบบของ Redux)
+
+**ใช้ในงาน:**
+- Web applications
+- SPAs (Single Page Applications)
+
+### 2.3.2 Multi-paradigm Languages (FP + OOP)
+
+ภาษาที่รองรับทั้ง FP และ OOP:
+
+#### **C# (.NET)**
+
+**FP Features ใน C#:**
+```csharp
+// Records - immutable by default (C# 9+)
+public record User(string Email, string Name);
+
+// Pattern matching (C# 8+)
+var message = user switch
+{
+    { Age: < 18 } => "Minor",
+    { Age: >= 18 and < 65 } => "Adult",
+    { Age: >= 65 } => "Senior",
+    _ => "Unknown"
+};
+
+// LINQ - functional data processing
+var adults = users
+    .Where(u => u.Age >= 18)
+    .Select(u => u.Name)
+    .ToList();
+```
+
+**FP Libraries สำหรับ C#:**
+- **language-ext v5** ⭐ (ใช้ในหนังสือนี้)
+  - Monads: Option, Either, Validation
+  - Higher-Kinded Types: K<M, A>
+  - Effect System: Eff<RT, A>
+  - Has pattern (dependency injection)
+
+- **OneOf** - Discriminated unions
+- **FluentValidation** - Functional validation
+
+**จุดเด่น:**
+- Mature ecosystem (.NET)
+- ใช้ร่วมกับ OOP code ได้
+- Performance ดี
+- IDE support ดี (Visual Studio, Rider)
+
+**ใช้ในงาน:**
+- Enterprise applications
+- Web APIs (ASP.NET Core)
+- Microservices
+- Cloud services (Azure)
+
+#### **TypeScript (JavaScript)**
+
+**FP Features ใน TypeScript:**
+```typescript
+// Discriminated unions
+type Result<T, E> =
+  | { _tag: 'success'; value: T }
+  | { _tag: 'error'; error: E };
+
+// Readonly types
+interface User {
+  readonly id: number;
+  readonly email: string;
+}
+
+// Array methods - functional
+const adults = users
+  .filter(u => u.age >= 18)
+  .map(u => u.name);
+```
+
+**FP Libraries สำหรับ TypeScript:**
+- **Effect-TS** ⭐ (ใช้ในหนังสือนี้)
+  - Effect<A, E, R> - type-safe effects
+  - Option, Either
+  - Context management
+  - Generators syntax
+
+- **fp-ts** - Pure FP library (ตัวเก่าก่อน Effect-TS)
+- **Ramda** - Functional utilities
+- **Immer** - Immutable state management
+
+**จุดเด่น:**
+- Type safety บน JavaScript
+- ใช้ได้ทั้ง frontend และ backend (Node.js)
+- Ecosystem ใหญ่มาก
+- นิยมใน web development
+
+**ใช้ในงาน:**
+- Frontend (React, Angular, Vue)
+- Backend (Node.js, Deno, Bun)
+- Full-stack (Next.js, Remix)
+
+#### **Scala**
+
+```scala
+// FP + OOP on JVM
+case class User(email: String, name: String, age: Int)
+
+// For-comprehension (คล้าย LINQ)
+val result = for {
+  user <- getUser(userId)
+  orders <- getOrders(user.id)
+  total <- calculateTotal(orders)
+} yield total
+```
+
+**FP Libraries:**
+- **Cats** - Core FP abstractions
+- **Cats Effect** - Effect system
+- **ZIO** - Modern effect system
+
+**จุดเด่น:**
+- FP ที่แข็งแรงบน JVM
+- Interop กับ Java
+- Akka (actor model) สำหรับ concurrency
+
+**ใช้ในงาน:**
+- Big data (Apache Spark)
+- Distributed systems (Akka)
+- Backend services
+
+#### **Kotlin**
+
+```kotlin
+// FP features in Kotlin
+data class User(val email: String, val name: String)
+
+// Sealed classes (discriminated unions)
+sealed class Result<out T> {
+    data class Success<T>(val value: T) : Result<T>()
+    data class Error(val message: String) : Result<Nothing>()
+}
+```
+
+**FP Library:**
+- **Arrow** - FP for Kotlin
+
+**จุดเด่น:**
+- Modern language บน JVM
+- นิยมใน Android development
+- Syntax สะอาด เรียนรู้ง่าย
+
+### 2.3.3 ภาษาที่ใช้ในหนังสือนี้
+
+หนังสือนี้เน้นสอน FP ใน **2 ภาษาหลัก** ที่นิยมในการพัฒนา Web Applications:
+
+#### **Backend: C# + language-ext v5**
+
+**เหตุผลที่เลือก C#:**
+1. **Mature Ecosystem** - .NET มี libraries และ tools มากมาย
+2. **Performance** - .NET runtime มี performance ดีเยี่ยม
+3. **Type Safety** - C# มี type system ที่แข็งแรง
+4. **Industry Adoption** - ใช้กันแพร่หลายใน enterprise
+
+**เหตุผลที่เลือก language-ext v5:**
+1. **Higher-Kinded Types** - K<M, A> ทำให้เขียน generic code ได้
+2. **Has Pattern** - Dependency injection แบบ type-safe
+3. **Effect System** - Eff<RT, A> สำหรับจัดการ side effects
+4. **Complete** - มี monads ครบ (Option, Either, Validation, Fin, etc.)
+
+**ตัวอย่างโค้ดในหนังสือ:**
+```csharp
+// Functional backend with language-ext v5
+public static K<M, TodoDto> CreateTodo<M, RT>(CreateTodoRequest request)
+    where M : Monad<M>, MonadIO<M>
+    where RT : Has<M, DatabaseIO>, Has<M, LoggerIO>, Has<M, TimeIO>
+{
+    return
+        from now in Time<M, RT>.now()
+        from todo in M.Pure(new Todo
+        {
+            Title = request.Title,
+            CreatedAt = now
+        })
+        from _ in Logger<M, RT>.logInfo("Creating todo: {Title}", todo.Title)
+        from saved in Database<M, RT>.saveTodo(todo)
+        select MapToDto(saved);
+}
+```
+
+#### **Frontend: TypeScript + Effect-TS**
+
+**เหตุผลที่เลือก TypeScript:**
+1. **Web Standard** - JavaScript/TypeScript เป็นภาษาหลักของ web
+2. **Type Safety** - TypeScript เพิ่ม type checking บน JavaScript
+3. **Ecosystem** - npm มี packages มากมาย
+4. **Frameworks** - React, Vue, Angular รองรับ TypeScript
+
+**เหตุผลที่เลือก Effect-TS:**
+1. **Modern Design** - สร้างใหม่จาก fp-ts เพื่อใช้งานง่ายขึ้น
+2. **Effect System** - Effect<A, E, R> จัดการ async, errors, dependencies
+3. **Generator Syntax** - Effect.gen ทำให้อ่านโค้ดง่ายเหมือน async/await
+4. **Type-safe** - Track dependencies และ errors ใน type system
+
+**ตัวอย่างโค้ดในหนังสือ:**
+```typescript
+// Functional frontend with Effect-TS
+import { Effect, Context } from "effect";
+
+const createTodo = (request: CreateTodoRequest) =>
+  Effect.gen(function* (_) {
+    const api = yield* _(TodoApi);
+    const logger = yield* _(Logger);
+
+    yield* _(logger.info(`Creating todo: ${request.title}`));
+
+    const todo = yield* _(api.createTodo(request));
+
+    return todo;
+  });
+```
+
+**สรุป:**
+
+| Aspect | Backend | Frontend |
+|--------|---------|----------|
+| ภาษา | C# 12+ | TypeScript 5+ |
+| Library | language-ext v5 | Effect-TS |
+| Runtime | .NET 8+ | Node.js / Browser |
+| Use Case | Web APIs, Microservices | SPAs, React apps |
+| Type System | Nominal typing | Structural typing |
+| Effect System | Eff<RT, A> | Effect<A, E, R> |
+
+**หมายเหตุ:** หนังสือนี้จะสอนแนวคิดเดียวกัน แต่เขียนใน 2 ภาษา เพื่อให้เห็น FP ทำงานได้ทั้ง backend และ frontend
+
+---
+
+## 2.4 Pure Functions - หัวใจของ Functional Programming
+
+### 2.4.1 คำนิยาม
 
 **Pure Function** คือฟังก์ชันที่มีคุณสมบัติ 2 ข้อ:
 
 1. **Deterministic** - Input เดียวกัน ให้ Output เดียวกันเสมอ
 2. **No Side Effects** - ไม่เปลี่ยนแปลงสิ่งใดนอกฟังก์ชัน
 
-### 2.1.2 ตัวอย่างเปรียบเทียบ
+### 2.4.2 ตัวอย่างเปรียบเทียบ
 
 **ตัวอย่างที่ 1: การคำนวณราคา**
 
@@ -73,7 +607,7 @@ console.log(myItems);  // ['apple', 'banana'] - ไม่เปลี่ยน!
 console.log(result);   // ['apple', 'banana', 'orange'] - array ใหม่
 ```
 
-### 2.1.3 ประโยชน์ของ Pure Functions
+### 2.4.3 ประโยชน์ของ Pure Functions
 
 #### 1. **ทดสอบง่าย**
 
@@ -185,7 +719,7 @@ const total2 = calculateTotal(total1, 600); // 990
 // เห็นชัดเจนทันที ไม่ต้องตาม state
 ```
 
-### 2.1.4 Side Effects ที่ควรหลีกเลี่ยง
+### 2.4.4 Side Effects ที่ควรหลีกเลี่ยง
 
 Side effects ที่ทำให้ฟังก์ชันไม่ pure:
 
@@ -220,7 +754,7 @@ public class ImpureService
 }
 ```
 
-### 2.1.5 จัดการ Side Effects ในโลกจริง
+### 2.4.5 จัดการ Side Effects ในโลกจริง
 
 **คำถาม:** แล้ว application ที่ทำ I/O จริง จะเป็น pure ได้ไหม?
 
@@ -269,9 +803,9 @@ public static K<M, User> CreateUser<M, RT>(string email, string name)
 
 ---
 
-## 2.2 Immutability - ข้อมูลที่ไม่เปลี่ยนแปลง
+## 2.5 Immutability - ข้อมูลที่ไม่เปลี่ยนแปลง
 
-### 2.2.1 ทำไมต้อง Immutable?
+### 2.5.1 ทำไมต้อง Immutable?
 
 **ปัญหาของ Mutable State:**
 
@@ -305,7 +839,7 @@ async function addToCart(item: Item) {
 }
 ```
 
-### 2.2.2 Immutable Data Structures
+### 2.5.2 Immutable Data Structures
 
 **C# Records - Immutable by Design:**
 
@@ -364,7 +898,7 @@ console.log(todo1.completed);  // false - ไม่เปลี่ยน!
 console.log(todo2.completed);  // true
 ```
 
-### 2.2.3 Working with Immutable Collections
+### 2.5.3 Working with Immutable Collections
 
 **C# - ImmutableList:**
 
@@ -402,7 +936,7 @@ numbers.push(4);      // แก้ array เดิม
 numbers.splice(1, 1); // แก้ array เดิม
 ```
 
-### 2.2.4 Performance Considerations
+### 2.5.4 Performance Considerations
 
 **คำถาม:** Immutable ไม่ช้ากว่าเหรอ? ต้องสร้าง copy ทุกครั้ง
 
@@ -465,9 +999,9 @@ const newState2 = produce(state, draft => {
 
 ---
 
-## 2.3 Function Composition - ประกอบฟังก์ชัน
+## 2.6 Function Composition - ประกอบฟังก์ชัน
 
-### 2.3.1 แนวคิด
+### 2.6.1 แนวคิด
 
 **Function Composition** = เอาฟังก์ชันเล็กๆ มาต่อกันเป็นฟังก์ชันใหญ่
 
@@ -476,7 +1010,7 @@ const newState2 = produce(state, draft => {
 Input → Function1 → Function2 → Function3 → Output
 ```
 
-### 2.3.2 Compose vs Pipe
+### 2.6.2 Compose vs Pipe
 
 **Compose - ทำงานจากขวาไปซ้าย:**
 
@@ -516,7 +1050,7 @@ const result = pipe(
 );  // "hello world!"
 ```
 
-### 2.3.3 LINQ Query Syntax (C#)
+### 2.6.3 LINQ Query Syntax (C#)
 
 C# มี syntax พิเศษสำหรับ composition:
 
@@ -550,7 +1084,7 @@ var result =
 // ทุก step คืน K<M, A> และ compose กันได้ธรรมชาติ
 ```
 
-### 2.3.4 Practical Example - Data Pipeline
+### 2.6.4 Practical Example - Data Pipeline
 
 **Scenario:** ประมวลผล order data
 
@@ -593,9 +1127,9 @@ const processOrders = (orders: Order[]): ProcessedOrder[] =>
 
 ---
 
-## 2.4 Algebraic Data Types
+## 2.7 Algebraic Data Types
 
-### 2.4.1 Option<T> - การจัดการค่าที่อาจไม่มี
+### 2.7.1 Option<T> - การจัดการค่าที่อาจไม่มี
 
 **ปัญหาของ null:**
 
@@ -663,7 +1197,7 @@ Option<Order> orderOpt = userOpt.Bind(u => GetLatestOrder(u.Id));
 Option<User> adult = userOpt.Filter(u => u.Age >= 18);
 ```
 
-### 2.4.2 Either<L, R> - Error Handling
+### 2.7.2 Either<L, R> - Error Handling
 
 **Either** แทน exceptions ด้วย type-safe errors:
 
@@ -724,7 +1258,7 @@ pipe(
 );
 ```
 
-### 2.4.3 Validation<E, A> - Error Accumulation
+### 2.7.3 Validation<E, A> - Error Accumulation
 
 **ปัญหาของ Either:** หยุดที่ error แรก
 
@@ -773,9 +1307,9 @@ result.Match(
 
 ---
 
-## 2.5 Monads - อธิบายแบบเข้าใจง่าย
+## 2.8 Monads - อธิบายแบบเข้าใจง่าย
 
-### 2.5.1 Monad คืออะไร?
+### 2.8.1 Monad คืออะไร?
 
 **คำจำกัดความทางคณิตศาสตร์:** (ข้ามไปก่อน ไม่สำคัญตอนนี้)
 
@@ -789,7 +1323,7 @@ result.Match(
 - `List<T>` = กล่องที่มีหลายค่า
 - `Task<T>` = กล่องที่จะมีค่าในอนาคต
 
-### 2.5.2 Monad Laws (สั้นๆ)
+### 2.8.2 Monad Laws (สั้นๆ)
 
 Monad ต้องมี:
 1. **Return** (Pure) - ใส่ค่าเข้ากล่อง
@@ -804,7 +1338,7 @@ Option<int> x = Some(5);
 Option<int> result = x.Bind(val => Some(val * 2));
 ```
 
-### 2.5.3 ทำไมต้องใช้ Monad?
+### 2.8.3 ทำไมต้องใช้ Monad?
 
 **ปัญหา: Nested Error Handling**
 
@@ -842,7 +1376,7 @@ public Option<User> GetUserWithOrders(int userId) =>
 // สั้น ชัดเจน ไม่มี nested ifs!
 ```
 
-### 2.5.4 Monad ใน language-ext และ Effect-TS
+### 2.8.4 Monad ใน language-ext และ Effect-TS
 
 **language-ext - K<M, A>:**
 ```csharp
@@ -877,9 +1411,9 @@ const program = Effect.gen(function* (_) {
 
 ---
 
-## 2.6 Error Handling แบบ Functional
+## 2.9 Error Handling แบบ Functional
 
-### 2.6.1 ปัญหาของ Exceptions
+### 2.9.1 ปัญหาของ Exceptions
 
 **Exceptions มีปัญหา:**
 
@@ -906,7 +1440,7 @@ var result = GetUser(1)
     .CalculateTotal();
 ```
 
-### 2.6.2 Railway Oriented Programming
+### 2.9.2 Railway Oriented Programming
 
 **แนวคิด:** แทน exceptions ด้วย Either - มี 2 ทาง "สำเร็จ" หรือ "ล้มเหลว"
 
@@ -944,7 +1478,7 @@ const processOrder = (orderId: number): Either.Either<Order, Error> =>
   );
 ```
 
-### 2.6.3 Error Types
+### 2.9.3 Error Types
 
 **แทนที่ generic Error ด้วย specific types:**
 
@@ -979,7 +1513,7 @@ result.Match(
 
 ---
 
-## 2.7 สรุป
+## 2.10 สรุป
 
 ### แนวคิดพื้นฐาน Functional Programming ที่ต้องรู้:
 
