@@ -360,30 +360,154 @@ validation.Match(
 
 #### 6.4 Chaining Specifications with Eff
 
+**❌ แบบเดิม (mutate variable):**
 ```csharp
-// Compose specifications ใน effect pipeline
+// ⚠️ ไม่ใช่ FP - กำลัง mutate spec!
 public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
     int userId,
     bool completedOnly,
     int lastDays)
     where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
 {
-    // Build spec functionally
-    var spec = TodoSpecs.ByUser(userId);
+    var spec = TodoSpecs.ByUser(userId);  // mutable variable
 
     if (completedOnly)
-        spec = spec.And(TodoSpecs.IsCompleted());
+        spec = spec.And(TodoSpecs.IsCompleted());  // ❌ mutation!
 
     if (lastDays > 0)
         spec = spec.And(TodoSpecs.CreatedAfter(
-            DateTime.Now.AddDays(-lastDays)));
+            DateTime.Now.AddDays(-lastDays)));  // ❌ mutation!
 
-    // Execute with effect
     return from todos in TodoRepo.findTodos<RT>(spec)
-           from validated in todos.Traverse(ValidateTodo)  // ✅ Validate all
+           select todos.ToSeq();
+}
+```
+
+**✅ FP Style 1: Conditional Expression (Immutable)**
+```csharp
+public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
+    int userId,
+    bool completedOnly,
+    int lastDays)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    // Pure expression - ไม่มี mutation
+    var spec =
+        (completedOnly
+            ? TodoSpecs.ByUser(userId).And(TodoSpecs.IsCompleted())
+            : TodoSpecs.ByUser(userId))
+        |> (s => lastDays > 0
+            ? s.And(TodoSpecs.CreatedAfter(DateTime.Now.AddDays(-lastDays)))
+            : s);
+
+    return from todos in TodoRepo.findTodos<RT>(spec)
+           select todos.ToSeq();
+}
+```
+
+**✅ FP Style 2: Fold Pattern (แนะนำ!)** ⭐
+```csharp
+public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
+    int userId,
+    bool completedOnly,
+    int lastDays)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    // Build list of filters to apply
+    var filters = Seq(
+        Some(TodoSpecs.ByUser(userId)),
+        completedOnly ? Some(TodoSpecs.IsCompleted()) : None,
+        lastDays > 0 ? Some(TodoSpecs.CreatedAfter(
+            DateTime.Now.AddDays(-lastDays))) : None
+    ).Somes();  // Keep only Some values
+
+    // Fold all filters together - pure composition!
+    var spec = filters.Reduce((acc, filter) => acc.And(filter));
+
+    return from todos in TodoRepo.findTodos<RT>(spec)
+           from validated in todos.Traverse(ValidateTodo)
            select validated.ToSeq();
 }
 ```
+
+**✅ FP Style 3: Pipe Operator** ⭐⭐
+```csharp
+public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
+    int userId,
+    bool completedOnly,
+    int lastDays)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    // Pure functional pipe - อ่านง่าย ไม่มี mutation
+    var spec = TodoSpecs.ByUser(userId)
+        .Apply(s => completedOnly ? s.And(TodoSpecs.IsCompleted()) : s)
+        .Apply(s => lastDays > 0
+            ? s.And(TodoSpecs.CreatedAfter(DateTime.Now.AddDays(-lastDays)))
+            : s);
+
+    return from todos in TodoRepo.findTodos<RT>(spec)
+           from validated in todos.Traverse(ValidateTodo)
+           select validated.ToSeq();
+}
+
+// Helper extension
+public static class SpecificationExtensions
+{
+    public static T Apply<T>(this T value, Func<T, T> fn) => fn(value);
+}
+```
+
+**✅ FP Style 4: Builder Function**
+```csharp
+public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
+    int userId,
+    bool completedOnly,
+    int lastDays)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    // Pure builder function
+    Specification<Todo> BuildSpec()
+    {
+        var baseSpec = TodoSpecs.ByUser(userId);
+
+        return (completedOnly, lastDays > 0) switch
+        {
+            (true, true) => baseSpec
+                .And(TodoSpecs.IsCompleted())
+                .And(TodoSpecs.CreatedAfter(DateTime.Now.AddDays(-lastDays))),
+
+            (true, false) => baseSpec
+                .And(TodoSpecs.IsCompleted()),
+
+            (false, true) => baseSpec
+                .And(TodoSpecs.CreatedAfter(DateTime.Now.AddDays(-lastDays))),
+
+            (false, false) => baseSpec
+        };
+    }
+
+    return from todos in TodoRepo.findTodos<RT>(BuildSpec())
+           from validated in todos.Traverse(ValidateTodo)
+           select validated.ToSeq();
+}
+```
+
+**เปรียบเทียบ Styles:**
+
+| Style | Readability | Purity | Scalability | แนะนำ |
+|-------|-------------|--------|-------------|-------|
+| Mutation | ⭐⭐⭐⭐ | ❌ | ⭐⭐ | ไม่แนะนำ |
+| Conditional | ⭐⭐ | ✅ | ⭐⭐ | OK |
+| Fold | ⭐⭐⭐⭐ | ✅ | ⭐⭐⭐⭐⭐ | ⭐ ดีที่สุด! |
+| Pipe | ⭐⭐⭐⭐⭐ | ✅ | ⭐⭐⭐⭐ | ⭐ แนะนำ! |
+| Pattern Match | ⭐⭐⭐ | ✅ | ⭐⭐ | OK |
+
+**แนะนำใช้ Fold Pattern** เพราะ:
+- ✅ Pure - ไม่มี mutation
+- ✅ Scalable - เพิ่ม filter ได้ง่าย
+- ✅ Composable - ใช้ language-ext Seq
+- ✅ Declarative - บอกว่า "มี filters อะไรบ้าง" แล้ว compose
+- ✅ Type-safe - compile-time safety
 
 ---
 
