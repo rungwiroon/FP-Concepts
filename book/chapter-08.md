@@ -2,6 +2,15 @@
 
 > "ทำให้โค้ด Frontend มี Type Safety และจัดการ Effects อย่างเป็นระบบ"
 
+**📦 Validated with Effect-TS 3.18.4 + TypeScript 5.9.3**
+
+> 💡 **สำคัญ**: บทนี้ใช้ Effect-TS 3.x API ซึ่งมีการเปลี่ยนแปลงจาก 2.x:
+> - ✅ `Effect.gen(function* () {})` - ไม่ต้องส่ง `_` parameter
+> - ✅ `yield* service` - ไม่ต้อง `yield* _()`
+> - ✅ `Effect.provide(effect, layer)` - data-first API
+>
+> หาก documentation อื่นใช้ Effect 2.x syntax อาจดูแตกต่าง!
+
 ---
 
 ## 8.1 ทำไมต้องใช้ Effect-TS ใน Frontend?
@@ -96,11 +105,13 @@ interface ApiService {
 const ApiService = Context.GenericTag<ApiService>("ApiService");
 
 // ใช้งาน - compiler บังคับให้ provide ApiService
-const program = Effect.gen(function* (_) {
-  const api = yield* _(ApiService);
-  const todos = yield* _(api.fetchTodos());
+const program = Effect.gen(function* () {
+  const api = yield* ApiService;
+  const todos = yield* api.fetchTodos(;
   return todos;
 });
+
+// 💡 Effect 3.x: ใช้ yield* โดยตรง (ไม่ต้อง yield* ) อีกต่อไป)
 ```
 
 **แนวทาง 3: Composable Effects**
@@ -108,11 +119,11 @@ const program = Effect.gen(function* (_) {
 ```typescript
 // ✅ Compose operations แบบ readable
 const loadDashboard = (userId: string) =>
-  Effect.gen(function* (_) {
-    const user = yield* _(fetchUser(userId));
-    const orders = yield* _(fetchOrders(user.id));
-    const products = yield* _(
-      Effect.all(orders.map(o => fetchProduct(o.productId)))
+  Effect.gen(function* () {
+    const user = yield* fetchUser(userId;
+    const orders = yield* fetchOrders(user.id;
+    const products = yield* Effect.all(
+      orders.map(o => fetchProduct(o.productId))
     );
     return { user, orders, products };
   });
@@ -172,9 +183,9 @@ interface Logger {
 const LoggerTag = Context.GenericTag<Logger>("Logger");
 
 const needsLogger: Effect.Effect<void, never, Logger> =
-  Effect.gen(function* (_) {
-    const logger = yield* _(LoggerTag);
-    yield* _(logger.log("Hello from Effect-TS!"));
+  Effect.gen(function* () {
+    const logger = yield* LoggerTag;
+    yield* logger.log("Hello from Effect-TS!");
   });
 ```
 
@@ -232,11 +243,11 @@ const safeFetch = Effect.tryPromise({
 ```typescript
 import { Effect } from "effect";
 
-const program = Effect.gen(function* (_) {
-  // ใช้ yield* _() เพื่อ "unwrap" Effect
-  const user = yield* _(fetchUser(userId));
-  const orders = yield* _(fetchOrders(user.id));
-  const total = yield* _(calculateTotal(orders));
+const program = Effect.gen(function* () {
+  // ใช้ yield* เพื่อ "unwrap" Effect
+  const user = yield* fetchUser(userId);
+  const orders = yield* fetchOrders(user.id);
+  const total = yield* calculateTotal(orders);
 
   return { user, orders, total };
 });
@@ -259,10 +270,12 @@ const program = fetchUser(userId).pipe(
 );
 ```
 
-**คำอธิบาย `yield* _()`:**
-- `yield*` = unwrap Effect<A, E, R> → ได้ค่า A
-- `_()` = helper function ที่ Effect.gen ส่งให้
+**คำอธิบาย `yield*`:**
+- `yield*` = unwrap Effect<A, E, R> → ได้ค่า A (extract value from Effect)
 - ถ้า Effect fail จะหยุดทันที (short-circuit)
+- ไม่ต้องใช้ `try/catch` - error handling automatic!
+
+**💡 Effect 3.x**: ใช้ `yield*` โดยตรง (ไม่มี `_()` helper อีกต่อไป)
 
 ### 8.2.4 Transforming Effects
 
@@ -326,8 +339,19 @@ const value = Effect.runSync(effect); // 42
 **3. Effect.runPromiseExit - รับทั้ง success และ error**
 
 ```typescript
+import { Effect, Exit } from "effect";
+
 const effect = Effect.fail(new Error("Oops"));
 
+// ✅ Functional approach with Exit.match
+Effect.runPromiseExit(effect).then(
+  Exit.match({
+    onFailure: (cause) => console.log("Failure:", cause),
+    onSuccess: (value) => console.log("Success:", value)
+  })
+);
+
+// 🔄 Imperative approach (ใช้ได้แต่ไม่ functional)
 Effect.runPromiseExit(effect).then(exit => {
   if (exit._tag === "Success") {
     console.log("Success:", exit.value);
@@ -341,7 +365,7 @@ Effect.runPromiseExit(effect).then(exit => {
 
 ## 8.3 Option และ Either ใน Effect-TS
 
-### 8.3.1 Option<A> - ค่าที่อาจไม่มี
+### 8.3.1 `Option<A>` - ค่าที่อาจไม่มี
 
 Effect-TS มี `Option` type สำหรับค่าที่อาจเป็น `Some(value)` หรือ `None`:
 
@@ -605,14 +629,14 @@ const TodoApi = Context.GenericTag<TodoApi>("TodoApi");
 
 ```typescript
 // ใช้งาน - compiler บังคับให้ provide TodoApi
-const fetchAllTodos = Effect.gen(function* (_) {
-  const api = yield* _(TodoApi);
-  const todos = yield* _(api.fetchTodos());
+const fetchAllTodos = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const todos = yield* api.fetchTodos();
   return todos;
 });
 
 // Type: Effect<Todo[], ApiError, TodoApi>
-//                    ^success  ^error    ^requirements
+//               ^success  ^error    ^requirements
 ```
 
 ### 8.4.3 Service Implementation
@@ -696,13 +720,14 @@ const TodoApiMock = Layer.succeed(
 **Provide ด้วย Layer:**
 
 ```typescript
-// Provide TodoApiLive implementation
-const program = fetchAllTodos.pipe(
-  Effect.provide(TodoApiLive)
-);
+// 💡 Effect 3.x: ใช้ Effect.provide(effect, layer) - data-first API
+const program = Effect.provide(fetchAllTodos, TodoApiLive);
 
-// ตอนนี้ program มี type: Effect<Todo[], ApiError, never>
+// ตอนนี้ program มี type: Effect<Todo[], ApiError>
 // Requirements (TodoApi) หายไปแล้ว!
+
+// 🔄 Effect 2.x (เก่า): effect.pipe(Effect.provide(layer))
+// const program = fetchAllTodos.pipe(Effect.provide(TodoApiLive));
 ```
 
 **Multiple Dependencies:**
@@ -726,9 +751,7 @@ const AppLayer = Layer.mergeAll(
 );
 
 // Provide all at once
-const program = myComplexProgram.pipe(
-  Effect.provide(AppLayer)
-);
+const program = Effect.provide(myComplexProgram, AppLayer);
 ```
 
 ---
@@ -775,14 +798,28 @@ export interface Todo {
 
 // Error types
 export class TodoNotFoundError {
-  readonly _tag = "TodoNotFoundError";
-  constructor(readonly id: string) {}
+  readonly _tag = "TodoNotFoundError" as const;
+  readonly id: string;
+
+  constructor(id: string) {
+    this.id = id;
+  }
 }
 
 export class ApiError {
-  readonly _tag = "ApiError";
-  constructor(readonly message: string, readonly cause?: unknown) {}
+  readonly _tag = "ApiError" as const;
+  readonly message: string;
+  readonly cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    this.message = message;
+    this.cause = cause;
+  }
 }
+
+// 💡 หมายเหตุ: ใน TypeScript 5.x + Vite
+// ต้องใช้ explicit property declarations แทน parameter properties
+// เพื่อให้ทำงานกับ verbatimModuleSyntax ได้
 
 export type TodoError = TodoNotFoundError | ApiError;
 
@@ -952,76 +989,76 @@ import { TodoApi, Todo, TodoError } from "../services/TodoApi";
 import { Logger } from "../services/Logger";
 
 // Fetch all todos with logging
-export const fetchAllTodos = Effect.gen(function* (_) {
-  const api = yield* _(TodoApi);
-  const logger = yield* _(Logger);
+export const fetchAllTodos = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const logger = yield* Logger;
 
-  yield* _(logger.info("Fetching all todos"));
+  yield* logger.info("Fetching all todos");
 
-  const todos = yield* _(api.fetchTodos());
+  const todos = yield* api.fetchTodos();
 
-  yield* _(logger.info(`Fetched ${todos.length} todos`));
+  yield* logger.info(`Fetched ${todos.length} todos`);
 
   return todos;
 });
 
 // Create todo with validation
 export const createTodo = (title: string) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
 
     // Validation
     const trimmed = title.trim();
     if (trimmed.length === 0) {
-      return yield* _(Effect.fail(new Error("Title cannot be empty")));
+      return yield* Effect.fail(new Error("Title cannot be empty"));
     }
     if (trimmed.length > 200) {
-      return yield* _(Effect.fail(new Error("Title too long (max 200 chars)")));
+      return yield* Effect.fail(new Error("Title too long (max 200 chars)"));
     }
 
-    yield* _(logger.info(`Creating todo: ${trimmed}`));
+    yield* logger.info(`Creating todo: ${trimmed}`);
 
-    const todo = yield* _(api.createTodo(trimmed));
+    const todo = yield* api.createTodo(trimmed);
 
-    yield* _(logger.info(`Created todo with id: ${todo.id}`));
+    yield* logger.info(`Created todo with id: ${todo.id}`);
 
     return todo;
   });
 
 // Toggle todo completion
 export const toggleTodo = (id: string, currentCompleted: boolean) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
 
-    yield* _(logger.info(`Toggling todo ${id}: ${currentCompleted} → ${!currentCompleted}`));
+    yield* logger.info(`Toggling todo ${id}: ${currentCompleted} → ${!currentCompleted}`);
 
-    const updated = yield* _(
+    const updated = yield* 
       api.updateTodo(id, { completed: !currentCompleted })
     );
 
-    yield* _(logger.info(`Todo ${id} updated successfully`));
+    yield* logger.info(`Todo ${id} updated successfully`);
 
     return updated;
   });
 
 // Delete todo
 export const deleteTodo = (id: string) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
 
-    yield* _(logger.info(`Deleting todo ${id}`));
+    yield* logger.info(`Deleting todo ${id}`);
 
-    yield* _(api.deleteTodo(id));
+    yield* api.deleteTodo(id);
 
-    yield* _(logger.info(`Todo ${id} deleted successfully`));
+    yield* logger.info(`Todo ${id} deleted successfully`);
   });
 
 // Get incomplete todos count
-export const getIncompleteTodosCount = Effect.gen(function* (_) {
-  const todos = yield* _(fetchAllTodos);
+export const getIncompleteTodosCount = Effect.gen(function* () {
+  const todos = yield* fetchAllTodos;
   return todos.filter(t => !t.completed).length;
 });
 ```
@@ -1069,28 +1106,32 @@ import { Effect } from "effect";
 import { useRunEffect } from "../hooks/useEffect";
 import { fetchAllTodos, toggleTodo, deleteTodo } from "../effects/todos";
 import { AppLayer } from "../layers";
+import type { Todo } from "../services/TodoApi";
 
-export function TodoList() {
+interface TodoListProps {
+  onRefresh: number;
+  onUpdate: () => void;
+}
+
+export function TodoList({ onRefresh, onUpdate }: TodoListProps) {
   const { data: todos, error, loading } = useRunEffect(
-    fetchAllTodos.pipe(Effect.provide(AppLayer)),
-    []
+    Effect.provide(fetchAllTodos, AppLayer),
+    [onRefresh]
   );
 
   const handleToggle = (id: string, completed: boolean) => {
     Effect.runPromise(
-      toggleTodo(id, completed).pipe(Effect.provide(AppLayer))
+      Effect.provide(toggleTodo(id, completed), AppLayer)
     ).then(() => {
-      // Refresh list
-      window.location.reload();
+      onUpdate(); // ✅ Trigger re-fetch แทนการ reload หน้า
     });
   };
 
   const handleDelete = (id: string) => {
     Effect.runPromise(
-      deleteTodo(id).pipe(Effect.provide(AppLayer))
+      Effect.provide(deleteTodo(id), AppLayer)
     ).then(() => {
-      // Refresh list
-      window.location.reload();
+      onUpdate(); // ✅ Trigger re-fetch แทนการ reload หน้า
     });
   };
 
@@ -1137,7 +1178,7 @@ export function AddTodoForm({ onAdded }: { onAdded: () => void }) {
     setError(null);
 
     Effect.runPromise(
-      createTodo(title).pipe(Effect.provide(AppLayer))
+      Effect.provide(createTodo(title), AppLayer)
     )
       .then(() => {
         setTitle("");
@@ -1180,6 +1221,43 @@ export const AppLayer = Layer.mergeAll(
   LoggerLive
 );
 ```
+
+**App.tsx - จัดการ state และ refresh:**
+
+```typescript
+import { useState } from 'react';
+import './App.css';
+import { TodoList } from './components/TodoList';
+import { AddTodoForm } from './components/AddTodoForm';
+
+function App() {
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleUpdate = () => {
+    setRefreshKey(prev => prev + 1); // ✅ Trigger re-fetch
+  };
+
+  return (
+    <div className="App">
+      <header className="App-header">
+        <h1>Effect-TS Todo App</h1>
+        <p className="subtitle">Frontend with Effect-TS - Chapter 8</p>
+      </header>
+      <main className="App-main">
+        <AddTodoForm onAdded={handleUpdate} />
+        <TodoList onRefresh={refreshKey} onUpdate={handleUpdate} />
+      </main>
+    </div>
+  );
+}
+
+export default App;
+```
+
+**การทำงาน:**
+1. เมื่อ add/update/delete todo → เรียก `handleUpdate()`
+2. `refreshKey` เพิ่มขึ้น → `useRunEffect` re-run
+3. Re-fetch ข้อมูลใหม่โดยไม่ reload หน้า ✨
 
 ---
 
@@ -1226,9 +1304,9 @@ const todoCache = Cache.make({
 });
 
 // Use cache
-Effect.gen(function* (_) {
-  const cache = yield* _(todoCache);
-  const todos = yield* _(cache.get("all-todos"));
+Effect.gen(function* () {
+  const cache = yield* todoCache;
+  const todos = yield* cache.get("all-todos");
   return todos;
 });
 ```
@@ -1239,14 +1317,13 @@ Effect.gen(function* (_) {
 import { Effect } from "effect";
 
 // Run effects in parallel
-const loadDashboard = Effect.gen(function* (_) {
-  const [todos, stats, profile] = yield* _(
+const loadDashboard = Effect.gen(function* () {
+  const [todos, stats, profile] = yield* 
     Effect.all([
       fetchAllTodos,
       fetchStats(),
       fetchProfile()
-    ], { concurrency: "unbounded" })
-  );
+    ], { concurrency: "unbounded" });
 
   return { todos, stats, profile };
 });
@@ -1366,8 +1443,8 @@ function validateTitle(title: string): Either.Either<string, ValidationError> {
 
 // Then use in Effect
 const createTodo = (title: string) =>
-  Effect.gen(function* (_) {
-    const validTitle = yield* _(
+  Effect.gen(function* () {
+    const validTitle = yield* 
       Effect.fromEither(validateTitle(title))
     );
     // ... rest of logic
@@ -1396,10 +1473,10 @@ const fetchTodos = fetchAllTodos.pipe(Effect.provide(AppLayer));
 Effect.all([effect1, effect2, effect3], { concurrency: "unbounded" });
 
 // ❌ Bad - sequential
-Effect.gen(function* (_) {
-  const r1 = yield* _(effect1);
-  const r2 = yield* _(effect2);
-  const r3 = yield* _(effect3);
+Effect.gen(function* () {
+  const r1 = yield* effect1;
+  const r2 = yield* effect2;
+  const r3 = yield* effect3;
   return [r1, r2, r3];
 });
 ```
@@ -1508,8 +1585,8 @@ const TodoApiLive = Layer.succeed(
    - Test ด้วย mock layers
 
 4. **Option และ Either** - Type-safe null handling และ error handling
-   - Option<A> แทน null/undefined
-   - Either<E, A> แทน exceptions
+   - `Option<A>` แทน null/undefined
+   - `Either<E, A>` แทน exceptions
 
 5. **Composition** - ต่อ effects ให้เป็นโปรแกรมใหญ่
    - Effect.map, Effect.flatMap
@@ -1585,7 +1662,7 @@ const WeatherApi = Context.GenericTag<WeatherApi>("WeatherApi");
 
 ```typescript
 const getUserSummary = (userId: string) =>
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     // TODO: Implement
   });
 ```
