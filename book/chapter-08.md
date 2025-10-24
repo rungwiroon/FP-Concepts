@@ -107,7 +107,7 @@ const ApiService = Context.GenericTag<ApiService>("ApiService");
 // ใช้งาน - compiler บังคับให้ provide ApiService
 const program = Effect.gen(function* () {
   const api = yield* ApiService;
-  const todos = yield* api.fetchTodos(;
+  const todos = yield* api.fetchTodos();
   return todos;
 });
 
@@ -120,8 +120,8 @@ const program = Effect.gen(function* () {
 // ✅ Compose operations แบบ readable
 const loadDashboard = (userId: string) =>
   Effect.gen(function* () {
-    const user = yield* fetchUser(userId;
-    const orders = yield* fetchOrders(user.id;
+    const user = yield* fetchUser(userId);
+    const orders = yield* fetchOrders(user.id);
     const products = yield* Effect.all(
       orders.map(o => fetchProduct(o.productId))
     );
