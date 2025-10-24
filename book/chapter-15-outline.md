@@ -10,8 +10,11 @@
 - เข้าใจปัญหาของ Repository Explosion
 - ใช้ Specification Pattern เพื่อสร้าง composable query logic
 - ใช้ Expression Trees เพื่อทำงานกับทั้ง in-memory และ EF Core
+- **เปรียบเทียบ OOP vs FP approaches สำหรับ specifications**
+- **สร้าง pure specification builders แบบ functional**
+- **ใช้ monadic composition (Map/Bind) กับ specifications**
+- **ผสาน specifications กับ language-ext types (Option, Either, Validation)**
 - เขียน Test และ Live implementations ที่ใช้ specification ร่วมกัน
-- สร้าง specification ที่ซับซ้อนด้วย And, Or, Not operations
 
 ---
 
@@ -38,10 +41,17 @@
 - Step 6: อัพเดท capability modules
 - Step 7: ใช้งานใน application services
 
-### 4. Advanced Composition
-- Combining multiple specifications
-- Dynamic query building
-- Reusable query logic across entities
+### 4. Functional Programming Approach ⭐ NEW
+- **OOP vs FP specifications** - เปรียบเทียบ 2 แนวทาง
+- **Pure specification builders** - static methods แทน classes
+- **Monadic composition** - Map, Bind operations
+- **Specification as Functor/Monad** - category theory concepts
+
+### 5. Integration กับ language-ext ⭐ NEW
+- **Option integration** - queries ที่อาจไม่มีผลลัพธ์
+- **Either integration** - error handling แบบ type-safe
+- **Validation integration** - specifications เป็น validation rules
+- **Pure functions** - specification builders ที่ไม่มี side effects
 
 ---
 
@@ -96,7 +106,7 @@ public interface ITodoRepository
 // ใช้ .Where(spec.ToExpression()) กับ EF Core
 ```
 
-### ส่วนที่ 3: การใช้งานจริง (15 นาที)
+### ส่วนที่ 3: การใช้งานแบบ OOP (Traditional) (10 นาที)
 
 #### ตัวอย่างที่ 1: Simple Query
 ```csharp
@@ -112,44 +122,381 @@ var spec = new CompletedTodoSpec()
 var recentCompletedByUser = await TodoRepo.findTodos(spec, ct);
 ```
 
-#### ตัวอย่างที่ 3: Dynamic Filters
+**ปัญหาของแนวทาง OOP:**
+- ต้องสร้าง class ใหม่ทุกครั้ง
+- Constructor dependencies ทำให้ซับซ้อน
+- ยากต่อการ reuse และ compose
+
+---
+
+### ส่วนที่ 4: FP Refactoring - Pure Specification Builders ⭐ (20 นาที)
+
+#### 4.1 จาก Classes → Pure Functions
+
+**❌ OOP Style (class-based):**
 ```csharp
-// Build spec based on user input
-Specification<Todo> spec = new AllTodosSpec();
-if (isCompletedOnly) spec = spec.And(new CompletedTodoSpec());
-if (userId.HasValue) spec = spec.And(new TodosByUserSpec(userId.Value));
+public class CompletedTodoSpec : Specification<Todo>
+{
+    public override Expression<Func<Todo, bool>> ToExpression()
+        => todo => todo.IsCompleted;
+}
+
+// ใช้งาน
+var spec = new CompletedTodoSpec();
 ```
 
-### ส่วนที่ 4: Testing Specifications (10 นาที)
-- Unit test specifications in isolation
-- Integration test with repository
-- Verify EF Core query translation
+**✅ FP Style (pure builders):**
+```csharp
+public static class TodoSpecs
+{
+    // Pure specification builders - ไม่มี side effects
+    public static Specification<Todo> IsCompleted() =>
+        Spec.Create<Todo>(todo => todo.IsCompleted);
 
-### ส่วนที่ 5: ข้อดีของ Pattern นี้ (5 นาที)
-- ✅ Eliminates repository explosion
-- ✅ Reusable query logic
-- ✅ Composable business logic
-- ✅ Testable in isolation
-- ✅ Works with both test and production
-- ✅ Dynamic query building
+    public static Specification<Todo> ByUser(int userId) =>
+        Spec.Create<Todo>(todo => todo.UserId == userId);
+
+    public static Specification<Todo> CreatedAfter(DateTime date) =>
+        Spec.Create<Todo>(todo => todo.CreatedAt > date);
+
+    // Composed builders - function composition
+    public static Specification<Todo> CompletedByUser(int userId) =>
+        IsCompleted().And(ByUser(userId));
+
+    public static Specification<Todo> RecentAndCompleted(int days) =>
+        IsCompleted().And(CreatedAfter(DateTime.Now.AddDays(-days)));
+}
+
+// ใช้งาน - สั้นกระชับกว่า
+var spec = TodoSpecs.IsCompleted();
+var composed = TodoSpecs.CompletedByUser(userId);
+```
+
+**ข้อดีของ FP Builders:**
+- ✅ Pure functions - predictable, testable
+- ✅ No inheritance hierarchy
+- ✅ Easy to compose and reuse
+- ✅ Type inference ทำงานได้ดีกว่า
+- ✅ สอดคล้องกับ language-ext style
+
+#### 4.2 Generic Spec Helpers
+```csharp
+public static class Spec
+{
+    // Factory method สำหรับสร้าง spec
+    public static Specification<T> Create<T>(Expression<Func<T, bool>> expr) =>
+        new ExpressionSpec<T>(expr);
+
+    // Combinator functions
+    public static Specification<T> All<T>() =>
+        Create<T>(_ => true);
+
+    public static Specification<T> None<T>() =>
+        Create<T>(_ => false);
+}
+```
+
+---
+
+### ส่วนที่ 5: Monadic Composition ⭐ (25 นาที)
+
+#### 5.1 Specification as Functor
+
+```csharp
+// เพิ่ม Map method ใน Specification<T>
+public abstract class Specification<T>
+{
+    // Existing methods...
+    public abstract Expression<Func<T, bool>> ToExpression();
+    public Specification<T> And(Specification<T> other) { ... }
+    public Specification<T> Or(Specification<T> other) { ... }
+
+    // ⭐ NEW: Functor Map
+    public Specification<TResult> Map<TResult>(
+        Func<T, TResult> selector)
+    {
+        // Transform specification to work on different type
+        // Useful for projection queries
+    }
+}
+```
+
+**ตัวอย่างการใช้ Map:**
+```csharp
+// Query todos and project to DTO
+var todoSpec = TodoSpecs.IsCompleted();
+
+// Map spec to work with projections
+var titleSpec = todoSpec.Map(todo => new TodoDto
+{
+    Id = todo.Id,
+    Title = todo.Title
+});
+```
+
+#### 5.2 Specification as Monad (Bind)
+
+```csharp
+public abstract class Specification<T>
+{
+    // ⭐ NEW: Monadic Bind
+    public Specification<TResult> Bind<TResult>(
+        Func<T, Specification<TResult>> binder)
+    {
+        // Chain specifications together
+    }
+
+    // ⭐ LINQ query syntax support
+    public Specification<TResult> SelectMany<TResult>(
+        Func<T, Specification<TResult>> binder) => Bind(binder);
+}
+```
+
+#### 5.3 LINQ Query Syntax
+```csharp
+// ใช้ LINQ query syntax กับ specifications
+var complexSpec =
+    from todo in TodoSpecs.ByUser(userId)
+    where todo.IsCompleted
+    where todo.CreatedAt > DateTime.Now.AddDays(-7)
+    select todo;
+```
+
+---
+
+### ส่วนที่ 6: Integration กับ language-ext Types ⭐ (25 นาที)
+
+#### 6.1 Specifications + Option<T>
+
+```csharp
+// Query ที่อาจไม่มีผลลัพธ์
+public static Eff<RT, Option<Todo>> findFirst<RT>(
+    Specification<Todo> spec)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    return from todos in TodoRepo.findTodos<RT>(spec)
+           select todos.HeadOrNone();  // ✅ language-ext Option
+}
+
+// ใช้งาน
+var result = await TodoService
+    .findFirst(TodoSpecs.ByUser(userId))
+    .Run(runtime, ct);
+
+result.Match(
+    Some: todo => $"Found: {todo.Title}",
+    None: () => "No todo found"
+);
+```
+
+#### 6.2 Specifications + Either<Error, T>
+
+```csharp
+// Query พร้อม error handling
+public static Eff<RT, Either<Error, Todo>> findById<RT>(
+    int id)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    return from todoOpt in findFirst<RT>(TodoSpecs.ById(id))
+           select todoOpt.ToEither<Error>(
+               Error.New("TODO_NOT_FOUND", $"Todo {id} not found")
+           );
+}
+
+// ใช้งาน
+var result = await TodoService.findById(123).Run(runtime, ct);
+
+result.Match(
+    Right: todo => $"Found: {todo.Title}",
+    Left: error => $"Error: {error.Message}"
+);
+```
+
+#### 6.3 Specifications as Validation Rules ⭐
+
+```csharp
+// ใช้ specification เป็น validation rules
+public static class TodoValidations
+{
+    // Specification สำหรับ validation
+    public static Specification<Todo> HasValidTitle() =>
+        Spec.Create<Todo>(t => !string.IsNullOrWhiteSpace(t.Title));
+
+    public static Specification<Todo> TitleNotTooLong() =>
+        Spec.Create<Todo>(t => t.Title.Length <= 200);
+
+    public static Specification<Todo> HasValidUser() =>
+        Spec.Create<Todo>(t => t.UserId > 0);
+}
+
+// แปลง specification → Validation monad
+public static Validation<Error, Todo> ValidateTodo(Todo todo)
+{
+    var validations = new[]
+    {
+        TodoValidations.HasValidTitle(),
+        TodoValidations.TitleNotTooLong(),
+        TodoValidations.HasValidUser()
+    };
+
+    var errors = validations
+        .Where(spec => !spec.IsSatisfiedBy(todo))
+        .Select(spec => Error.New("VALIDATION", spec.GetErrorMessage()))
+        .ToSeq();
+
+    return errors.IsEmpty
+        ? Success<Error, Todo>(todo)
+        : Fail<Error, Todo>(errors);
+}
+
+// ใช้งาน
+var validation = ValidateTodo(newTodo);
+
+validation.Match(
+    Succ: todo => SaveTodo(todo),
+    Fail: errors => ShowErrors(errors)
+);
+```
+
+#### 6.4 Chaining Specifications with Eff
+
+```csharp
+// Compose specifications ใน effect pipeline
+public static Eff<RT, Seq<Todo>> getFilteredTodos<RT>(
+    int userId,
+    bool completedOnly,
+    int lastDays)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    // Build spec functionally
+    var spec = TodoSpecs.ByUser(userId);
+
+    if (completedOnly)
+        spec = spec.And(TodoSpecs.IsCompleted());
+
+    if (lastDays > 0)
+        spec = spec.And(TodoSpecs.CreatedAfter(
+            DateTime.Now.AddDays(-lastDays)));
+
+    // Execute with effect
+    return from todos in TodoRepo.findTodos<RT>(spec)
+           from validated in todos.Traverse(ValidateTodo)  // ✅ Validate all
+           select validated.ToSeq();
+}
+```
+
+---
+
+### ส่วนที่ 7: Testing Specifications (15 นาที)
+
+#### 7.1 Unit Test Pure Builders
+```csharp
+[Test]
+public void TodoSpecs_IsCompleted_FilterCorrectly()
+{
+    // Arrange
+    var todos = new[]
+    {
+        new Todo { Id = 1, IsCompleted = true },
+        new Todo { Id = 2, IsCompleted = false },
+        new Todo { Id = 3, IsCompleted = true }
+    };
+
+    // Act - test pure function
+    var spec = TodoSpecs.IsCompleted();
+    var filtered = todos.Where(spec.IsSatisfiedBy);
+
+    // Assert
+    filtered.Should().HaveCount(2);
+}
+```
+
+#### 7.2 Test Monadic Composition
+```csharp
+[Test]
+public void Specification_Map_TransformsCorrectly()
+{
+    var spec = TodoSpecs.ByUser(1);
+    var mapped = spec.Map(todo => todo.Title);
+
+    // Test functor laws
+    // 1. Identity: spec.Map(x => x) == spec
+    // 2. Composition: spec.Map(f).Map(g) == spec.Map(x => g(f(x)))
+}
+```
+
+#### 7.3 Test with Option/Either
+```csharp
+[Test]
+public async Task FindFirst_NoMatch_ReturnsNone()
+{
+    // Arrange
+    var spec = TodoSpecs.ByUser(999); // Non-existent user
+
+    // Act
+    var result = await TodoService
+        .findFirst(spec)
+        .Run(testRuntime, ct);
+
+    // Assert
+    result.IsNone.Should().BeTrue();
+}
+```
+
+---
+
+### ส่วนที่ 8: OOP vs FP Comparison (10 นาที)
+
+#### Side-by-Side Comparison
+
+| Aspect | OOP Approach | FP Approach |
+|--------|--------------|-------------|
+| **Definition** | Classes (inheritance) | Pure functions (composition) |
+| **State** | Instance fields | Stateless |
+| **Composition** | Method chaining | Function composition |
+| **Reuse** | Inheritance | Higher-order functions |
+| **Testing** | Mock objects | Pure function testing |
+| **Type Safety** | Manual validation | Monadic types (Option/Either) |
+
+#### เมื่อไหร่ใช้อะไร?
+
+**ใช้ OOP Style:**
+- Specifications ที่ซับซ้อนมาก มี internal state
+- ต้อง polymorphism แบบ runtime
+- Team คุ้นเคยกับ OOP มากกว่า
+
+**ใช้ FP Style:** ⭐ แนะนำ
+- ต้องการ pure, testable code
+- Composition มีความสำคัญ
+- ผสานกับ language-ext ecosystem
+- ต้องการ type-safe error handling
 
 ---
 
 ## 💻 ตัวอย่างโค้ดที่จะใช้
 
 ### ไฟล์ที่จะสร้าง/แก้ไข
-- `Domain/Specifications/Specification.cs` (new)
-- `Domain/Specifications/TodoSpecs.cs` (new)
+
+**Traditional Implementation (40%):**
+- `Domain/Specifications/Specification.cs` (new) - base class
+- `Domain/Specifications/TodoSpecs.cs` (new) - OOP style specs
 - `Infrastructure/Repositories/ITodoRepository.cs` (modified)
 - `Infrastructure/Repositories/TestTodoRepository.cs` (modified)
 - `Infrastructure/Repositories/LiveTodoRepository.cs` (modified)
-- `Features/Todos/TodoService.cs` (modified)
+
+**FP Enhancements (60%):** ⭐
+- `Domain/Specifications/Spec.cs` (new) - pure builder helpers
+- `Domain/Specifications/SpecificationExtensions.cs` (new) - Map/Bind
+- `Domain/Specifications/TodoSpecBuilders.cs` (new) - FP style builders
+- `Domain/Validations/TodoSpecValidations.cs` (new) - validation integration
+- `Features/Todos/TodoService.cs` (modified) - Option/Either usage
+- `Features/Todos/TodoQueryService.cs` (new) - monadic queries
 
 ### Code Statistics
 - ลบ: ~10 query methods จาก repository
-- เพิ่ม: 1 generic `FindAsync` method
-- เพิ่ม: ~5 specification classes
-- Total LOC: ~200 lines
+- เพิ่ม Traditional: ~200 lines (Specification base, OOP specs)
+- เพิ่ม FP: ~300 lines (Pure builders, Map/Bind, integrations)
+- Total LOC: ~500 lines
 
 ---
 
@@ -158,25 +505,34 @@ if (userId.HasValue) spec = spec.And(new TodosByUserSpec(userId.Value));
 ### ระดับง่าย: ทำความเข้าใจ
 1. ทำไม repository ถึงเกิด method explosion?
 2. Expression Tree คืออะไร? ต่างจาก Func อย่างไร?
-3. `IsSatisfiedBy()` ใช้ทำอะไร?
+3. Pure function specification builder ต่างจาก class-based อย่างไร?
+4. Functor และ Monad คืออะไร? เกี่ยวข้องกับ Specification ยังไง?
 
 ### ระดับกลาง: ลองเขียน
-1. สร้าง `IncompleteTodoSpec` specification
-2. สร้าง `TodosByPrioritySpec` (สมมติมี priority field)
-3. ใช้ And/Or เพื่อ compose query ที่ซับซ้อน
+1. สร้าง pure builder `IncompleteTodoSpec()` แบบ FP style
+2. เขียน specification ที่ใช้ Map เพื่อ project ไป TodoDto
+3. ใช้ Option<T> กับ query ที่อาจไม่มีผลลัพธ์
+4. สร้าง validation rules จาก specifications
+5. Compose หลาย specs ด้วย And/Or แบบ monadic
 
-### ระดับยาก: Challenges
-1. สร้าง `TextSearchSpec` ที่รองรับ partial text search
-2. สร้าง specification สำหรับ entity อื่น (เช่น User, Project)
-3. เพิ่ม sorting ใน specification (เช่น OrderByCreatedDate)
+### ระดับยาก: Challenges ⭐
+1. Implement `Bind` method ให้ Specification เป็น monad
+2. เขียน LINQ query syntax provider สำหรับ specifications
+3. สร้าง `Traverse` method เพื่อ validate list of entities
+4. Implement specification caching สำหรับ compiled expressions
+5. สร้าง specification ที่ทำงานกับ async predicates
+6. เขียน property-based tests สำหรับ functor/monad laws
 
 ---
 
 ## 🔗 เชื่อมโยงกับบทอื่น
 
 **ต้องอ่านก่อน:**
+- บทที่ 2: แนวคิดพื้นฐาน FP (Pure Functions, Monads)
+- บทที่ 3: แนะนำ language-ext v5 (Option, Either, Validation)
 - บทที่ 4: Has<M, RT, T>.ask Pattern
 - บทที่ 5: Backend API ด้วย Capabilities
+- บทที่ 6: Validation และ Error Handling
 
 **อ่านต่อ:**
 - บทที่ 16: Pagination Pattern (ใช้ specification ร่วมกับ pagination)
@@ -186,11 +542,11 @@ if (userId.HasValue) spec = spec.And(new TodosByUserSpec(userId.Value));
 
 ## 📊 สถิติและเวลาอ่าน
 
-- **ระดับความยาก:** ⭐⭐⭐ (กลาง)
-- **เวลาอ่าน:** ~60 นาที
-- **เวลาลงมือทำ:** ~90 นาที
-- **จำนวนตัวอย่างโค้ด:** ~15 ตัวอย่าง
-- **จำนวนหน้าโดยประมาณ:** ~12 หน้า
+- **ระดับความยาก:** ⭐⭐⭐⭐ (ค่อนข้างยาก - มี FP concepts เยอะ)
+- **เวลาอ่าน:** ~90 นาที (เพิ่มจาก 60 เพราะมี FP sections)
+- **เวลาลงมือทำ:** ~150 นาที (รวม FP refactoring)
+- **จำนวนตัวอย่างโค้ด:** ~25 ตัวอย่าง (เพิ่มจาก 15)
+- **จำนวนหน้าโดยประมาณ:** ~18 หน้า (เพิ่มจาก 12)
 
 ---
 
@@ -199,9 +555,12 @@ if (userId.HasValue) spec = spec.And(new TodosByUserSpec(userId.Value));
 หลังจากอ่านบทนี้ คุณจะได้:
 
 1. **Pattern ที่แก้ปัญหาจริง** - Repository explosion เป็นปัญหาที่เจอบ่อย
-2. **Composable design** - And/Or/Not ทำให้ query flexible
-3. **Testable** - Specification test ได้แยกจาก repository
-4. **Production-ready** - ใช้งานได้กับ EF Core โดยไม่ต้อง load ทั้ง table
+2. **OOP → FP Evolution** - เห็นวิธี refactor traditional pattern เป็น functional
+3. **Pure Functional Design** - Specification builders ที่ไม่มี side effects
+4. **Monadic Composition** - ใช้ Map/Bind เพื่อ compose specifications
+5. **Type-Safe Queries** - ผสาน Option/Either สำหรับ error handling
+6. **Validation as Specifications** - reuse query logic เป็น validation rules
+7. **Testable & Composable** - Pure functions ที่ test ง่ายและ compose ได้
 
 ---
 
@@ -213,9 +572,14 @@ if (userId.HasValue) spec = spec.And(new TodosByUserSpec(userId.Value));
   - Testing section
   - Benefits section
 
-- เน้น before/after comparison
+- **เน้น OOP → FP progression** (40% traditional, 60% FP)
+- แสดง before/after comparison ทุกส่วน
+- เปรียบเทียบ class-based vs pure builders side-by-side
 - แสดง EF Core query ที่ generate ออกมา (SQL)
-- เปรียบเทียบกับ alternative approaches (Query Object, Repository per Query)
+- เปรียบเทียบกับ alternative approaches
+- **เน้น language-ext integration** - Option, Either, Validation, Seq
+- **Functor/Monad laws** - อธิบายและทดสอบ
+- **Real-world use cases** - เมื่อไหร่ใช้ OOP vs FP
 
 ---
 
