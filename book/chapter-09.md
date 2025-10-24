@@ -1,5 +1,15 @@
 # บทที่ 9: สร้าง Frontend Architecture
 
+**📦 Validated with Effect-TS 3.18.4 + TypeScript 5.9.3**
+
+> 💡 **สำคัญ**: บทนี้ใช้ Effect-TS 3.x API ซึ่งมีการเปลี่ยนแปลงจาก 2.x:
+> - ✅ `Effect.gen(function* () {})` - ไม่ต้องส่ง `_` parameter
+> - ✅ `yield* service` - เข้าถึง service โดยตรง ไม่ต้องใช้ `yield* _()`
+> - ✅ `Effect.provide(effect, layer)` - data-first API
+> - ✅ `Ref.make()` - สร้าง mutable state แบบ functional
+>
+> หากคุณใช้ Effect-TS 2.x โปรดอัปเดตเป็น 3.x ก่อนทำตามบทนี้
+
 > สร้าง Frontend แบบ Type-Safe, Testable และ Maintainable ด้วย Effect-TS
 
 ---
@@ -588,36 +598,36 @@ const createMockData = (): Todo[] => [
  */
 export const TodoApiMock = Layer.effect(
   TodoApi,
-  Effect.gen(function* (_) {
+  Effect.gen(function* () {
     // Create mutable state
-    const todosRef = yield* _(Ref.make(createMockData()));
+    const todosRef = yield* Ref.make(createMockData());
     let nextId = 4;
 
     return TodoApi.of({
       fetchAll: () =>
-        Effect.gen(function* (_) {
-          const todos = yield* _(Ref.get(todosRef));
+        Effect.gen(function* () {
+          const todos = yield* Ref.get(todosRef);
           // Simulate network delay
-          yield* _(Effect.sleep('100 millis'));
+          yield* Effect.sleep('100 millis');
           return todos;
         }),
 
       getById: (id: string) =>
-        Effect.gen(function* (_) {
-          const todos = yield* _(Ref.get(todosRef));
+        Effect.gen(function* () {
+          const todos = yield* Ref.get(todosRef);
           const todo = todos.find(t => t.id === id);
 
-          yield* _(Effect.sleep('50 millis'));
+          yield* Effect.sleep('50 millis');
 
           if (!todo) {
-            return yield* _(Effect.fail(new NotFoundError('Todo', id)));
+            return yield* Effect.fail(new NotFoundError('Todo', id));
           }
 
           return todo;
         }),
 
       create: (request: CreateTodoRequest) =>
-        Effect.gen(function* (_) {
+        Effect.gen(function* () {
           const newTodo: Todo = {
             id: String(nextId++),
             title: request.title,
@@ -625,19 +635,19 @@ export const TodoApiMock = Layer.effect(
             createdAt: new Date()
           };
 
-          yield* _(Ref.update(todosRef, todos => [...todos, newTodo]));
-          yield* _(Effect.sleep('100 millis'));
+          yield* Ref.update(todosRef, todos => [...todos, newTodo]);
+          yield* Effect.sleep('100 millis');
 
           return newTodo;
         }),
 
       update: (id: string, request: UpdateTodoRequest) =>
-        Effect.gen(function* (_) {
-          const todos = yield* _(Ref.get(todosRef));
+        Effect.gen(function* () {
+          const todos = yield* Ref.get(todosRef);
           const todo = todos.find(t => t.id === id);
 
           if (!todo) {
-            return yield* _(Effect.fail(new NotFoundError('Todo', id)));
+            return yield* Effect.fail(new NotFoundError('Todo', id));
           }
 
           const updated: Todo = {
@@ -646,23 +656,21 @@ export const TodoApiMock = Layer.effect(
             updatedAt: new Date()
           };
 
-          yield* _(
-            Ref.update(todosRef, todos =>
-              todos.map(t => (t.id === id ? updated : t))
-            )
+          yield* Ref.update(todosRef, todos =>
+            todos.map(t => (t.id === id ? updated : t))
           );
-          yield* _(Effect.sleep('100 millis'));
+          yield* Effect.sleep('100 millis');
 
           return updated;
         }),
 
       toggle: (id: string) =>
-        Effect.gen(function* (_) {
-          const todos = yield* _(Ref.get(todosRef));
+        Effect.gen(function* () {
+          const todos = yield* Ref.get(todosRef);
           const todo = todos.find(t => t.id === id);
 
           if (!todo) {
-            return yield* _(Effect.fail(new NotFoundError('Todo', id)));
+            return yield* Effect.fail(new NotFoundError('Todo', id));
           }
 
           const updated: Todo = {
@@ -671,27 +679,25 @@ export const TodoApiMock = Layer.effect(
             updatedAt: new Date()
           };
 
-          yield* _(
-            Ref.update(todosRef, todos =>
-              todos.map(t => (t.id === id ? updated : t))
-            )
+          yield* Ref.update(todosRef, todos =>
+            todos.map(t => (t.id === id ? updated : t))
           );
-          yield* _(Effect.sleep('50 millis'));
+          yield* Effect.sleep('50 millis');
 
           return updated;
         }),
 
       delete: (id: string) =>
-        Effect.gen(function* (_) {
-          const todos = yield* _(Ref.get(todosRef));
+        Effect.gen(function* () {
+          const todos = yield* Ref.get(todosRef);
           const exists = todos.some(t => t.id === id);
 
           if (!exists) {
-            return yield* _(Effect.fail(new NotFoundError('Todo', id)));
+            return yield* Effect.fail(new NotFoundError('Todo', id));
           }
 
-          yield* _(Ref.update(todosRef, todos => todos.filter(t => t.id !== id)));
-          yield* _(Effect.sleep('50 millis'));
+          yield* Ref.update(todosRef, todos => todos.filter(t => t.id !== id));
+          yield* Effect.sleep('50 millis');
         })
     });
   })
@@ -840,37 +846,33 @@ const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Fetch all todos with caching
  */
-export const fetchAllTodos = Effect.gen(function* (_) {
-  const api = yield* _(TodoApi);
-  const logger = yield* _(Logger);
-  const storage = yield* _(Storage);
+export const fetchAllTodos = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const logger = yield* Logger;
+  const storage = yield* Storage;
 
-  yield* _(logger.info('Fetching todos'));
+  yield* logger.info('Fetching todos');
 
   // Try cache first
-  const cached = yield* _(
-    Effect.orElseSucceed(
-      storage.get<{ todos: Todo[]; timestamp: number }>(CACHE_KEY),
-      () => null
-    )
+  const cached = yield* Effect.orElseSucceed(
+    storage.get<{ todos: Todo[]; timestamp: number }>(CACHE_KEY),
+    () => null
   );
 
   if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
-    yield* _(logger.debug('Using cached todos', { count: cached.todos.length }));
+    yield* logger.debug('Using cached todos', { count: cached.todos.length });
     return cached.todos;
   }
 
   // Fetch from API
-  const todos = yield* _(api.fetchAll());
+  const todos = yield* api.fetchAll();
 
-  yield* _(logger.info('Fetched todos from API', { count: todos.length }));
+  yield* logger.info('Fetched todos from API', { count: todos.length });
 
   // Update cache
-  yield* _(
-    Effect.orElseSucceed(
-      storage.set(CACHE_KEY, { todos, timestamp: Date.now() }),
-      () => undefined
-    )
+  yield* Effect.orElseSucceed(
+    storage.set(CACHE_KEY, { todos, timestamp: Date.now() }),
+    () => undefined
   );
 
   return todos;
@@ -880,15 +882,15 @@ export const fetchAllTodos = Effect.gen(function* (_) {
  * Get todo by ID
  */
 export const getTodoById = (id: string) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
 
-    yield* _(logger.debug(`Getting todo ${id}`));
+    yield* logger.debug(`Getting todo ${id}`);
 
-    const todo = yield* _(api.getById(id));
+    const todo = yield* api.getById(id);
 
-    yield* _(logger.debug(`Got todo ${id}`, todo));
+    yield* logger.debug(`Got todo ${id}`, todo);
 
     return todo;
   });
@@ -897,37 +899,35 @@ export const getTodoById = (id: string) =>
  * Create todo with validation
  */
 export const createTodo = (request: CreateTodoRequest) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
-    const storage = yield* _(Storage);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+    const storage = yield* Storage;
 
     // Validate
     const trimmed = request.title.trim();
 
     if (trimmed.length === 0) {
-      return yield* _(
-        Effect.fail(new ValidationError('title', 'Title cannot be empty'))
+      return yield* Effect.fail(
+        new ValidationError('title', 'Title cannot be empty')
       );
     }
 
     if (trimmed.length > 200) {
-      return yield* _(
-        Effect.fail(
-          new ValidationError('title', 'Title too long (max 200 characters)')
-        )
+      return yield* Effect.fail(
+        new ValidationError('title', 'Title too long (max 200 characters)')
       );
     }
 
-    yield* _(logger.info(`Creating todo: ${trimmed}`));
+    yield* logger.info(`Creating todo: ${trimmed}`);
 
     // Create
-    const todo = yield* _(api.create({ title: trimmed }));
+    const todo = yield* api.create({ title: trimmed });
 
-    yield* _(logger.info(`Created todo ${todo.id}`));
+    yield* logger.info(`Created todo ${todo.id}`);
 
     // Invalidate cache
-    yield* _(Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined));
+    yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
 
     return todo;
   });
@@ -936,38 +936,36 @@ export const createTodo = (request: CreateTodoRequest) =>
  * Update todo
  */
 export const updateTodo = (id: string, request: UpdateTodoRequest) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
-    const storage = yield* _(Storage);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+    const storage = yield* Storage;
 
     // Validate title if provided
     if (request.title !== undefined) {
       const trimmed = request.title.trim();
 
       if (trimmed.length === 0) {
-        return yield* _(
-          Effect.fail(new ValidationError('title', 'Title cannot be empty'))
+        return yield* Effect.fail(
+          new ValidationError('title', 'Title cannot be empty')
         );
       }
 
       if (trimmed.length > 200) {
-        return yield* _(
-          Effect.fail(
-            new ValidationError('title', 'Title too long (max 200 characters)')
-          )
+        return yield* Effect.fail(
+          new ValidationError('title', 'Title too long (max 200 characters)')
         );
       }
     }
 
-    yield* _(logger.info(`Updating todo ${id}`, request));
+    yield* logger.info(`Updating todo ${id}`, request);
 
-    const todo = yield* _(api.update(id, request));
+    const todo = yield* api.update(id, request);
 
-    yield* _(logger.info(`Updated todo ${id}`));
+    yield* logger.info(`Updated todo ${id}`);
 
     // Invalidate cache
-    yield* _(Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined));
+    yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
 
     return todo;
   });
@@ -976,19 +974,19 @@ export const updateTodo = (id: string, request: UpdateTodoRequest) =>
  * Toggle todo completion
  */
 export const toggleTodo = (id: string) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
-    const storage = yield* _(Storage);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+    const storage = yield* Storage;
 
-    yield* _(logger.info(`Toggling todo ${id}`));
+    yield* logger.info(`Toggling todo ${id}`);
 
-    const todo = yield* _(api.toggle(id));
+    const todo = yield* api.toggle(id);
 
-    yield* _(logger.info(`Toggled todo ${id} to ${todo.completed}`));
+    yield* logger.info(`Toggled todo ${id} to ${todo.completed}`);
 
     // Invalidate cache
-    yield* _(Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined));
+    yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
 
     return todo;
   });
@@ -997,19 +995,19 @@ export const toggleTodo = (id: string) =>
  * Delete todo
  */
 export const deleteTodo = (id: string) =>
-  Effect.gen(function* (_) {
-    const api = yield* _(TodoApi);
-    const logger = yield* _(Logger);
-    const storage = yield* _(Storage);
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+    const storage = yield* Storage;
 
-    yield* _(logger.info(`Deleting todo ${id}`));
+    yield* logger.info(`Deleting todo ${id}`);
 
-    yield* _(api.delete(id));
+    yield* api.delete(id);
 
-    yield* _(logger.info(`Deleted todo ${id}`));
+    yield* logger.info(`Deleted todo ${id}`);
 
     // Invalidate cache
-    yield* _(Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined));
+    yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
   });
 
 /**
@@ -1039,8 +1037,8 @@ export const calculateStats = (todos: Todo[]): TodoStats => ({
  * Get filtered todos with stats
  */
 export const getTodosWithStats = (filter: TodoFilter) =>
-  Effect.gen(function* (_) {
-    const todos = yield* _(fetchAllTodos);
+  Effect.gen(function* () {
+    const todos = yield* fetchAllTodos;
 
     const filtered = filterTodos(todos, filter);
     const stats = calculateStats(todos);
@@ -1051,35 +1049,31 @@ export const getTodosWithStats = (filter: TodoFilter) =>
 /**
  * Clear completed todos
  */
-export const clearCompleted = Effect.gen(function* (_) {
-  const api = yield* _(TodoApi);
-  const logger = yield* _(Logger);
-  const storage = yield* _(Storage);
+export const clearCompleted = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const logger = yield* Logger;
+  const storage = yield* Storage;
 
-  yield* _(logger.info('Clearing completed todos'));
+  yield* logger.info('Clearing completed todos');
 
   // Get all todos
-  const todos = yield* _(api.fetchAll());
+  const todos = yield* api.fetchAll();
 
   // Filter completed
   const completed = todos.filter(t => t.completed);
 
-  yield* _(
-    logger.info(`Found ${completed.length} completed todos to delete`)
-  );
+  yield* logger.info(`Found ${completed.length} completed todos to delete`);
 
   // Delete all completed in parallel
-  yield* _(
-    Effect.all(
-      completed.map(t => api.delete(t.id)),
-      { concurrency: 5 } // Limit concurrent requests
-    )
+  yield* Effect.all(
+    completed.map(t => api.delete(t.id)),
+    { concurrency: 5 } // Limit concurrent requests
   );
 
-  yield* _(logger.info('Cleared all completed todos'));
+  yield* logger.info('Cleared all completed todos');
 
   // Invalidate cache
-  yield* _(Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined));
+  yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
 });
 ```
 
@@ -1732,18 +1726,18 @@ describe('Todo Effects', () => {
 
   describe('toggleTodo', () => {
     it('should toggle todo completion', async () => {
-      const program = Effect.gen(function* (_) {
+      const program = Effect.gen(function* () {
         // Get initial todo
-        const todos = yield* _(fetchAllTodos);
+        const todos = yield* fetchAllTodos;
         const todo = todos[0];
         expect(todo.completed).toBe(false);
 
         // Toggle it
-        const toggled = yield* _(toggleTodo(todo.id));
+        const toggled = yield* toggleTodo(todo.id);
         expect(toggled.completed).toBe(true);
 
         // Toggle back
-        const toggledBack = yield* _(toggleTodo(todo.id));
+        const toggledBack = yield* toggleTodo(todo.id);
         expect(toggledBack.completed).toBe(false);
       }).pipe(Effect.provide(AppLayerMock));
 
