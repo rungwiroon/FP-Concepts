@@ -340,7 +340,7 @@ public static class CommentRepo
     {
         return from repo in default(RT).CommentRepoEff
                from ct in CancellationTokenIO.token<RT>()
-               from comment in EffMaybe(repo.GetByIdAsync(id, ct))
+               from comment in Eff(() => repo.GetByIdAsync(id, ct))
                select comment;
     }
 
@@ -351,7 +351,7 @@ public static class CommentRepo
     {
         return from repo in default(RT).CommentRepoEff
                from ct in CancellationTokenIO.token<RT>()
-               from comments in EffMaybe(repo.GetByTodoIdAsync(todoId, ct))
+               from comments in Eff(() => repo.GetByTodoIdAsync(todoId, ct))
                select comments;
     }
 
@@ -947,6 +947,48 @@ public static Either<Error, Todo> validateTodo(Todo todo)
         : Right<Error, Todo>(todo);
 }
 ```
+
+**Error 4: Using Non-Existent API** ⭐
+```csharp
+// ❌ AI invents APIs that don't exist in language-ext:
+public static Eff<RT, Option<Todo>> getTodo<RT>(int id)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    return from repo in default(RT).TodoRepoEff
+           from ct in CancellationTokenIO.token<RT>()
+           from todo in EffMaybe(repo.GetByIdAsync(id, ct))  // ❌ EffMaybe doesn't exist!
+           select todo;
+}
+
+// ✅ Correct: Use Eff with lambda
+public static Eff<RT, Option<Todo>> getTodo<RT>(int id)
+    where RT : struct, HasTodoRepo<RT>, HasCancellationToken<RT>
+{
+    return from repo in default(RT).TodoRepoEff
+           from ct in CancellationTokenIO.token<RT>()
+           from todo in Eff(() => repo.GetByIdAsync(id, ct))  // ✅ Correct!
+           select todo;
+}
+
+// ✅ Or with explicit async:
+from todo in Eff(async () => await repo.GetByIdAsync(id, ct))
+```
+
+**Common Non-Existent APIs AI Invents:**
+- ❌ `EffMaybe` - doesn't exist, use `Eff(() => ...)`
+- ❌ `EffAsync` - doesn't exist, use `Eff(() => ...)`
+- ❌ `ToEff()` extension - doesn't exist, use `Eff(() => ...)`
+- ❌ `LiftEff` (wrong casing) - correct is `liftEff`
+
+**Why this happens:**
+- AI mixes APIs from different FP libraries
+- AI extrapolates patterns that "should" exist
+- AI invents names that sound plausible
+
+**How to catch:**
+1. ✅ Check intellisense - if method doesn't exist, it's wrong
+2. ✅ Refer to language-ext docs/source
+3. ✅ Compile and test - these errors show immediately
 
 ---
 
