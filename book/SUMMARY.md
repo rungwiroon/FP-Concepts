@@ -44,7 +44,6 @@
 - [บทที่ 16: Pagination Pattern](chapter-16.md)
 - [บทที่ 17: Transaction Handling](chapter-17.md)
 - [บทที่ 18: Best Practices](chapter-18.md)
-- [บทที่ 19: Production Deployment](chapter-19.md)
 
 ---
 
