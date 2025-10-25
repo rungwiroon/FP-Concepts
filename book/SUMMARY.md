@@ -43,7 +43,8 @@
 - [บทที่ 15: Specification Pattern](chapter-15.md)
 - [บทที่ 16: Pagination Pattern](chapter-16.md)
 - [บทที่ 17: Transaction Handling](chapter-17.md)
-- [บทที่ 18: Best Practices](chapter-18.md)
+- [บทที่ 18: FP with AI-Assisted Development](chapter-18.md)
+- [บทที่ 19: Best Practices](chapter-19.md)
 
 ---
 
