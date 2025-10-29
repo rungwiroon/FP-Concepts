@@ -1,6 +1,6 @@
-# บทที่ 8: Frontend Development with Effect-TS
+# บทที่ 8: Effect-TS Fundamentals for Frontend
 
-> "ทำให้โค้ด Frontend มี Type Safety และจัดการ Effects อย่างเป็นระบบ"
+> "เริ่มต้นกับ Effect-TS - พื้นฐานที่ทุกคนต้องรู้"
 
 **📦 Validated with Effect-TS 3.18.4 + TypeScript 5.9.3**
 
@@ -10,6 +10,24 @@
 > - ✅ `Effect.provide(effect, layer)` - data-first API
 >
 > หาก documentation อื่นใช้ Effect 2.x syntax อาจดูแตกต่าง!
+
+> 🎯 **เป้าหมายบทนี้**: เรียนรู้พื้นฐาน Effect-TS และสร้าง Simple Todo App
+>
+> 💡 **บทนี้เน้น**: Concepts และ Basic Patterns - สำหรับ Production Architecture อ่านบทที่ 9
+
+---
+
+## เนื้อหาในบทนี้
+
+- 8.1 ทำไมต้องใช้ Effect-TS ใน Frontend?
+- 8.2 Effect-TS Core Concepts
+- 8.3 Option และ Either
+- 8.4 Context.Tag - Dependency Injection Basics
+- 8.5 Your First Effect App - Simple Todo (Fetch + Create Only)
+- 8.6 Testing Basics
+- 8.7 Core Principles
+- 8.8 Effect-TS vs Promises
+- 8.9 สรุปและบทถัดไป
 
 ---
 
@@ -603,12 +621,10 @@ function TodoList() {
 ```typescript
 import { Context, Effect } from "effect";
 
-// Service interface
+// Service interface - Simple API for Chapter 8
 interface TodoApi {
   readonly fetchTodos: () => Effect.Effect<Todo[], ApiError, never>;
   readonly createTodo: (title: string) => Effect.Effect<Todo, ApiError, never>;
-  readonly updateTodo: (id: string, updates: Partial<Todo>) => Effect.Effect<Todo, ApiError, never>;
-  readonly deleteTodo: (id: string) => Effect.Effect<void, ApiError, never>;
 }
 
 // Error types
@@ -664,24 +680,6 @@ const TodoApiLive = Layer.succeed(
             body: JSON.stringify({ title })
           }).then(r => r.json()),
         catch: (error) => new ApiError("Failed to create todo", error)
-      }),
-
-    updateTodo: (id: string, updates: Partial<Todo>) =>
-      Effect.tryPromise({
-        try: () =>
-          fetch(`/api/todos/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updates)
-          }).then(r => r.json()),
-        catch: (error) => new ApiError("Failed to update todo", error)
-      }),
-
-    deleteTodo: (id: string) =>
-      Effect.tryPromise({
-        try: () =>
-          fetch(`/api/todos/${id}`, { method: 'DELETE' }).then(() => {}),
-        catch: (error) => new ApiError("Failed to delete todo", error)
       })
   })
 );
@@ -702,15 +700,7 @@ const TodoApiMock = Layer.succeed(
       id: Math.random().toString(),
       title,
       completed: false
-    }),
-
-    updateTodo: (id: string, updates: Partial<Todo>) => Effect.succeed({
-      id,
-      title: updates.title ?? 'Updated',
-      completed: updates.completed ?? false
-    }),
-
-    deleteTodo: (id: string) => Effect.succeed(undefined)
+    })
   })
 );
 ```
@@ -823,16 +813,10 @@ export class ApiError {
 
 export type TodoError = TodoNotFoundError | ApiError;
 
-// Service interface
+// Service interface - Simple API for Chapter 8
 export interface TodoApi {
   readonly fetchTodos: () => Effect.Effect<Todo[], ApiError, never>;
-  readonly getTodo: (id: string) => Effect.Effect<Todo, TodoError, never>;
   readonly createTodo: (title: string) => Effect.Effect<Todo, ApiError, never>;
-  readonly updateTodo: (
-    id: string,
-    updates: Partial<Omit<Todo, 'id' | 'createdAt'>>
-  ) => Effect.Effect<Todo, TodoError, never>;
-  readonly deleteTodo: (id: string) => Effect.Effect<void, TodoError, never>;
 }
 
 // Context Tag
@@ -888,17 +872,6 @@ export const TodoApiLive = Layer.succeed(
         fetch(`${API_BASE}/todos`)
       ),
 
-    getTodo: (id: string) =>
-      handleResponse<Todo>(
-        fetch(`${API_BASE}/todos/${id}`)
-      ).pipe(
-        Effect.flatMap(todo =>
-          todo
-            ? Effect.succeed(todo)
-            : Effect.fail(new TodoNotFoundError(id))
-        )
-      ),
-
     createTodo: (title: string) =>
       handleResponse<Todo>(
         fetch(`${API_BASE}/todos`, {
@@ -906,43 +879,7 @@ export const TodoApiLive = Layer.succeed(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, completed: false })
         })
-      ),
-
-    updateTodo: (id: string, updates) =>
-      handleResponse<Todo>(
-        fetch(`${API_BASE}/todos/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates)
-        })
-      ).pipe(
-        Effect.flatMap(todo =>
-          todo
-            ? Effect.succeed(todo)
-            : Effect.fail(new TodoNotFoundError(id))
-        )
-      ),
-
-    deleteTodo: (id: string) =>
-      Effect.tryPromise({
-        try: async () => {
-          const response = await fetch(`${API_BASE}/todos/${id}`, {
-            method: "DELETE"
-          });
-          if (response.status === 404) {
-            throw new TodoNotFoundError(id);
-          }
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-        },
-        catch: (error) => {
-          if (error instanceof TodoNotFoundError) {
-            return error;
-          }
-          return new ApiError("Failed to delete todo", error);
-        }
-      })
+      )
   })
 );
 ```
@@ -1025,42 +962,6 @@ export const createTodo = (title: string) =>
 
     return todo;
   });
-
-// Toggle todo completion
-export const toggleTodo = (id: string, currentCompleted: boolean) =>
-  Effect.gen(function* () {
-    const api = yield* TodoApi;
-    const logger = yield* Logger;
-
-    yield* logger.info(`Toggling todo ${id}: ${currentCompleted} → ${!currentCompleted}`);
-
-    const updated = yield* 
-      api.updateTodo(id, { completed: !currentCompleted })
-    );
-
-    yield* logger.info(`Todo ${id} updated successfully`);
-
-    return updated;
-  });
-
-// Delete todo
-export const deleteTodo = (id: string) =>
-  Effect.gen(function* () {
-    const api = yield* TodoApi;
-    const logger = yield* Logger;
-
-    yield* logger.info(`Deleting todo ${id}`);
-
-    yield* api.deleteTodo(id);
-
-    yield* logger.info(`Todo ${id} deleted successfully`);
-  });
-
-// Get incomplete todos count
-export const getIncompleteTodosCount = Effect.gen(function* () {
-  const todos = yield* fetchAllTodos;
-  return todos.filter(t => !t.completed).length;
-});
 ```
 
 ### 8.5.5 React Integration
@@ -1104,36 +1005,19 @@ export function useRunEffect<A, E>(
 import React from "react";
 import { Effect } from "effect";
 import { useRunEffect } from "../hooks/useEffect";
-import { fetchAllTodos, toggleTodo, deleteTodo } from "../effects/todos";
+import { fetchAllTodos } from "../effects/todos";
 import { AppLayer } from "../layers";
 import type { Todo } from "../services/TodoApi";
 
 interface TodoListProps {
   onRefresh: number;
-  onUpdate: () => void;
 }
 
-export function TodoList({ onRefresh, onUpdate }: TodoListProps) {
+export function TodoList({ onRefresh }: TodoListProps) {
   const { data: todos, error, loading } = useRunEffect(
     Effect.provide(fetchAllTodos, AppLayer),
     [onRefresh]
   );
-
-  const handleToggle = (id: string, completed: boolean) => {
-    Effect.runPromise(
-      Effect.provide(toggleTodo(id, completed), AppLayer)
-    ).then(() => {
-      onUpdate(); // ✅ Trigger re-fetch แทนการ reload หน้า
-    });
-  };
-
-  const handleDelete = (id: string) => {
-    Effect.runPromise(
-      Effect.provide(deleteTodo(id), AppLayer)
-    ).then(() => {
-      onUpdate(); // ✅ Trigger re-fetch แทนการ reload หน้า
-    });
-  };
 
   if (loading) return <div>Loading...</div>;
   if (error) return <div>Error: {String(error)}</div>;
@@ -1143,15 +1027,12 @@ export function TodoList({ onRefresh, onUpdate }: TodoListProps) {
     <div className="todo-list">
       {todos.map(todo => (
         <div key={todo.id} className="todo-item">
-          <input
-            type="checkbox"
-            checked={todo.completed}
-            onChange={() => handleToggle(todo.id, todo.completed)}
-          />
           <span style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
             {todo.title}
           </span>
-          <button onClick={() => handleDelete(todo.id)}>Delete</button>
+          <span className="todo-status">
+            {todo.completed ? '✓ Completed' : '○ Pending'}
+          </span>
         </div>
       ))}
     </div>
@@ -1234,18 +1115,18 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleUpdate = () => {
-    setRefreshKey(prev => prev + 1); // ✅ Trigger re-fetch
+    setRefreshKey(prev => prev + 1); // Trigger re-fetch
   };
 
   return (
     <div className="App">
       <header className="App-header">
         <h1>Effect-TS Todo App</h1>
-        <p className="subtitle">Frontend with Effect-TS - Chapter 8</p>
+        <p className="subtitle">Simple Todo - Fetch & Create Only (Chapter 8)</p>
       </header>
       <main className="App-main">
         <AddTodoForm onAdded={handleUpdate} />
-        <TodoList onRefresh={refreshKey} onUpdate={handleUpdate} />
+        <TodoList onRefresh={refreshKey} />
       </main>
     </div>
   );
@@ -1255,85 +1136,23 @@ export default App;
 ```
 
 **การทำงาน:**
-1. เมื่อ add/update/delete todo → เรียก `handleUpdate()`
+1. เมื่อ add todo → เรียก `handleUpdate()`
 2. `refreshKey` เพิ่มขึ้น → `useRunEffect` re-run
-3. Re-fetch ข้อมูลใหม่โดยไม่ reload หน้า ✨
+3. Re-fetch ข้อมูลใหม่โดยไม่ reload หน้า
+
+> 💡 **Note**: Update และ Delete functionality จะครอบคลุมใน บทที่ 9
 
 ---
 
-## 8.6 Advanced Patterns
-
-### 8.6.1 Retry Logic
-
-```typescript
-import { Effect, Schedule } from "effect";
-
-// Retry up to 3 times with exponential backoff
-const fetchWithRetry = fetchAllTodos.pipe(
-  Effect.retry(
-    Schedule.exponential("100 millis").pipe(
-      Schedule.compose(Schedule.recurs(3))
-    )
-  ),
-  Effect.provide(AppLayer)
-);
-```
-
-### 8.6.2 Timeout
-
-```typescript
-import { Effect, Duration } from "effect";
-
-// Timeout after 5 seconds
-const fetchWithTimeout = fetchAllTodos.pipe(
-  Effect.timeout(Duration.seconds(5)),
-  Effect.provide(AppLayer)
-);
-```
-
-### 8.6.3 Caching
-
-```typescript
-import { Effect, Cache, Duration } from "effect";
-
-// Create cache
-const todoCache = Cache.make({
-  capacity: 100,
-  timeToLive: Duration.minutes(5),
-  lookup: (key: string) => fetchAllTodos.pipe(Effect.provide(AppLayer))
-});
-
-// Use cache
-Effect.gen(function* () {
-  const cache = yield* todoCache;
-  const todos = yield* cache.get("all-todos");
-  return todos;
-});
-```
-
-### 8.6.4 Parallel Execution
-
-```typescript
-import { Effect } from "effect";
-
-// Run effects in parallel
-const loadDashboard = Effect.gen(function* () {
-  const [todos, stats, profile] = yield* 
-    Effect.all([
-      fetchAllTodos,
-      fetchStats(),
-      fetchProfile()
-    ], { concurrency: "unbounded" });
-
-  return { todos, stats, profile };
-});
-```
+> 💡 **Advanced Patterns** (Retry, Timeout, Caching, Parallel Execution, Resource Management) จะครอบคลุมใน บทที่ 9
 
 ---
 
-## 8.7 Testing
+## 8.6 Testing Basics
 
-### 8.7.1 Unit Testing with Mock Layer
+การทดสอบ Effect-TS ทำได้ง่ายด้วย Mock Layers:
+
+### 8.6.1 Testing with Mock Layer
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1341,7 +1160,7 @@ import { Effect, Layer } from "effect";
 import { fetchAllTodos } from "./effects/todos";
 import { TodoApi } from "./services/TodoApi";
 
-// Mock layer
+// Mock layer - ให้ข้อมูลทดสอบแบบ static
 const TodoApiMock = Layer.succeed(
   TodoApi,
   TodoApi.of({
@@ -1349,19 +1168,18 @@ const TodoApiMock = Layer.succeed(
       { id: "1", title: "Test 1", completed: false, createdAt: new Date() },
       { id: "2", title: "Test 2", completed: true, createdAt: new Date() }
     ]),
-    getTodo: (id) => Effect.fail(new Error("Not implemented")),
-    createTodo: (title) => Effect.fail(new Error("Not implemented")),
-    updateTodo: (id, updates) => Effect.fail(new Error("Not implemented")),
-    deleteTodo: (id) => Effect.fail(new Error("Not implemented"))
+    createTodo: (title) => Effect.succeed({
+      id: "test-id",
+      title,
+      completed: false,
+      createdAt: new Date()
+    })
   })
 );
 
 describe("fetchAllTodos", () => {
   it("should fetch todos successfully", async () => {
-    const program = fetchAllTodos.pipe(
-      Effect.provide(TodoApiMock)
-    );
-
+    const program = Effect.provide(fetchAllTodos, TodoApiMock);
     const result = await Effect.runPromise(program);
 
     expect(result).toHaveLength(2);
@@ -1370,155 +1188,118 @@ describe("fetchAllTodos", () => {
 });
 ```
 
-### 8.7.2 Testing Error Handling
+### 8.6.2 Testing Validation
 
 ```typescript
+import { createTodo } from "./effects/todos";
+import { LoggerMock } from "./layers/LoggerMock";
+
+const TestLayer = Layer.mergeAll(TodoApiMock, LoggerMock);
+
 describe("createTodo", () => {
   it("should reject empty title", async () => {
-    const program = createTodo("").pipe(
-      Effect.provide(TodoApiMock)
-    );
+    const program = Effect.provide(createTodo(""), TestLayer);
 
     await expect(Effect.runPromise(program)).rejects.toThrow(
       "Title cannot be empty"
     );
   });
 
-  it("should reject long title", async () => {
-    const longTitle = "x".repeat(201);
-    const program = createTodo(longTitle).pipe(
-      Effect.provide(TodoApiMock)
-    );
+  it("should create todo with valid title", async () => {
+    const program = Effect.provide(createTodo("New Todo"), TestLayer);
+    const result = await Effect.runPromise(program);
 
-    await expect(Effect.runPromise(program)).rejects.toThrow(
-      "Title too long"
-    );
+    expect(result.title).toBe("New Todo");
+    expect(result.completed).toBe(false);
   });
 });
 ```
 
+**Key Testing Principles:**
+1. ใช้ Mock Layers แทน real implementations
+2. Test แต่ละ effect อิสระจากกัน
+3. Verify ทั้ง success และ error cases
+
+> 💡 **Advanced Testing** (Integration tests, property-based testing, concurrent testing) ครอบคลุมใน บทที่ 9 หัวข้อที่ 9.9
+
 ---
 
-## 8.8 Best Practices
+## 8.7 Core Principles
 
-### 8.8.1 Service Design
+หลักการสำคัญที่ต้องเข้าใจเมื่อใช้ Effect-TS:
 
-1. **Interface Segregation** - แยก service ตาม responsibility
+### 8.7.1 Type Safety First
+
+**Effect Type เป็นสัญญา (Contract)**
 
 ```typescript
-// ✅ Good - แยกชัดเจน
-interface TodoApi { /* ... */ }
-interface UserApi { /* ... */ }
-interface AuthApi { /* ... */ }
-
-// ❌ Bad - รวมทุกอย่าง
-interface Api {
-  fetchTodos: () => Effect.Effect<Todo[], Error, never>;
-  fetchUsers: () => Effect.Effect<User[], Error, never>;
-  login: (credentials: Credentials) => Effect.Effect<Token, Error, never>;
-  // ... too many responsibilities
+// Type บอกทุกอย่างที่เป็นไปได้
+function fetchTodo(id: string): Effect.Effect<Todo, TodoError, TodoApi> {
+  // Success: Todo
+  // Error: TodoError (ไม่มี error อื่น!)
+  // Requirements: ต้องมี TodoApi
 }
 ```
 
-2. **Error Types** - ใช้ discriminated unions
+**ข้อดี:**
+- Compiler บังคับให้ handle errors
+- ไม่มี runtime surprises
+- Refactor ได้ปลอดภัย
+
+### 8.7.2 Pure Functions
+
+**แยก logic ออกจาก effects**
 
 ```typescript
-// ✅ Good - แยก error types ชัดเจน
-type TodoError =
-  | { _tag: "NotFound"; id: string }
-  | { _tag: "ValidationError"; field: string; reason: string }
-  | { _tag: "ApiError"; message: string };
-
-// ❌ Bad - generic Error
-type TodoError = Error;
-```
-
-3. **Pure Effects** - แยก pure logic จาก side effects
-
-```typescript
-// ✅ Good - pure validation logic
+// ✅ Pure validation - testable, reusable
 function validateTitle(title: string): Either.Either<string, ValidationError> {
-  // Pure function - no side effects
+  if (title.trim() === "") {
+    return Either.left({ _tag: "EmptyField", field: "title" });
+  }
+  return Either.right(title.trim());
 }
 
-// Then use in Effect
+// Effect ใช้ pure function
 const createTodo = (title: string) =>
   Effect.gen(function* () {
-    const validTitle = yield* 
-      Effect.fromEither(validateTitle(title))
-    );
-    // ... rest of logic
+    const validTitle = yield* Effect.fromEither(validateTitle(title));
+    const api = yield* TodoApi;
+    return yield* api.createTodo(validTitle);
   });
 ```
 
-### 8.8.2 Performance
+### 8.7.3 Explicit Dependencies
 
-1. **Avoid unnecessary re-renders**
-
-```typescript
-// ✅ Good - memoize effects
-const fetchTodos = useMemo(
-  () => fetchAllTodos.pipe(Effect.provide(AppLayer)),
-  []
-);
-
-// ❌ Bad - creates new effect every render
-const fetchTodos = fetchAllTodos.pipe(Effect.provide(AppLayer));
-```
-
-2. **Use parallel execution**
+**ทุก dependency ต้องชัดเจนใน type signature**
 
 ```typescript
-// ✅ Good - parallel
-Effect.all([effect1, effect2, effect3], { concurrency: "unbounded" });
+// ✅ Good - เห็นว่าต้องการ TodoApi และ Logger
+const program: Effect.Effect<Todo[], ApiError, TodoApi | Logger> =
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+    // ...
+  });
 
-// ❌ Bad - sequential
-Effect.gen(function* () {
-  const r1 = yield* effect1;
-  const r2 = yield* effect2;
-  const r3 = yield* effect3;
-  return [r1, r2, r3];
-});
+// ❌ Bad - ใช้ global (hidden dependency)
+const api = new ApiClient(); // Global!
+const program = Effect.sync(() => api.fetchTodos());
 ```
 
-### 8.8.3 Error Handling
-
-1. **Handle errors at the right level**
-
-```typescript
-// ✅ Good - handle errors where you can recover
-const loadTodos = fetchAllTodos.pipe(
-  Effect.catchAll(error => {
-    // Can recover by showing cached data
-    return loadCachedTodos();
-  })
-);
-
-// ❌ Bad - catch too early
-const badApi = {
-  fetchTodos: () => fetchTodos().pipe(
-    Effect.catchAll(() => Effect.succeed([])) // Lost error info!
-  )
-};
-```
-
-2. **Use specific error types**
-
-```typescript
-// ✅ Good - handle each error differently
-pipe(
-  fetchTodo(id),
-  Effect.catchTag("NotFound", () => Effect.succeed(null)),
-  Effect.catchTag("Unauthorized", () => Effect.fail(new RedirectToLogin())),
-  Effect.catchTag("ApiError", error => Effect.fail(error))
-);
-```
+**ข้อดีของ Explicit Dependencies:**
+- Testing ง่าย - swap implementations
+- Refactoring ปลอดภัย - compiler บอกว่าขาดอะไร
+- ไม่มี hidden side effects
 
 ---
 
-## 8.9 Effect-TS vs Promises
+> 💡 **Comprehensive Best Practices** (Performance, Architecture Patterns, Error Handling Strategies) ครอบคลุมใน **บทที่ 9 หัวข้อที่ 9.10**
 
-### 8.9.1 เปรียบเทียบ
+---
+
+## 8.8 Effect-TS vs Promises
+
+### 8.8.1 เปรียบเทียบ
 
 | Aspect | Promise | Effect |
 |--------|---------|--------|
@@ -1531,7 +1312,7 @@ pipe(
 | Testing | ต้อง mock globals | Provide mock layers |
 | Type safety | Limited | Full (A, E, R tracked) |
 
-### 8.9.2 Migration Strategy
+### 8.8.2 Migration Strategy
 
 **Step 1: Wrap existing Promises**
 
@@ -1567,53 +1348,70 @@ const TodoApiLive = Layer.succeed(
 
 ---
 
-## 8.10 สรุป
+## 8.9 สรุปและบทถัดไป
 
-### สิ่งที่ได้เรียนรู้ในบทนี้
+### 8.9.1 สิ่งที่ได้เรียนรู้ในบทนี้
 
-1. **Effect<A, E, R>** - Type-safe effects
+เราได้เรียนรู้พื้นฐานของ Effect-TS ที่จำเป็นสำหรับการพัฒนา Frontend:
+
+1. **Effect<A, E, R>** - Type signature ที่บอกทุกอย่าง
    - A = Success value
-   - E = Error type
+   - E = Error type (type-safe!)
    - R = Requirements (dependencies)
 
-2. **Effect.gen** - Generator syntax for readable code
-   - คล้าย async/await แต่ type-safe กว่า
+2. **Effect.gen** - Generator syntax สำหรับเขียนโค้ดแบบ imperative
+   - คล้าย async/await แต่ type-safe
+   - Error handling automatic
 
-3. **Context.Tag** - Dependency Injection
+3. **Context.Tag** - Dependency Injection แบบ type-safe
    - Define services ด้วย interface
    - Provide implementations ด้วย Layer
    - Test ด้วย mock layers
 
-4. **Option และ Either** - Type-safe null handling และ error handling
-   - `Option<A>` แทน null/undefined
-   - `Either<E, A>` แทน exceptions
+4. **Option และ Either** - ทางเลือกแทน null/undefined และ exceptions
+   - `Option<A>` - ค่าที่อาจไม่มี
+   - `Either<E, A>` - Success หรือ Error
 
-5. **Composition** - ต่อ effects ให้เป็นโปรแกรมใหญ่
+5. **Composition** - ต่อ effects แบบ composable
    - Effect.map, Effect.flatMap
-   - Effect.all (parallel)
    - Effect.gen (sequential)
+   - Testing ง่ายด้วย Mock Layers
 
-### ข้อดีของ Effect-TS
+### 8.9.2 สิ่งที่ยังไม่ได้ครอบคลุม
 
-1. **Type Safety** - Compiler ช่วยจับ bugs
-2. **Testability** - Mock dependencies ได้ง่าย
-3. **Composability** - ต่อ effects ได้สวยงาม
-4. **Error Handling** - Errors เป็น values, ไม่ใช่ exceptions
-5. **Built-in Utilities** - Retry, timeout, caching
+บทนี้เน้นพื้นฐาน - หัวข้อต่อไปนี้จะครอบคลุมใน **บทที่ 9: Production Architecture**:
 
-### ข้อแลกเปลี่ยน (Trade-offs)
+**Advanced Patterns:**
+- Retry with Schedule (exponential backoff, custom policies)
+- Timeout Handling and Cancellation
+- Caching Strategies (memoization, request deduplication)
+- Parallel Execution (Effect.all, racing, batching)
+- Resource Management (acquire/release patterns)
 
-1. **Learning Curve** - ต้องเรียนรู้ concepts ใหม่
-2. **Verbosity** - โค้ดอาจยาวกว่า async/await
-3. **Bundle Size** - Effect-TS มีขนาดใหญ่กว่า utility libraries อื่น
-4. **Ecosystem** - น้อยกว่า Promise-based libraries
+**Production Features:**
+- Update/Delete Operations (full CRUD)
+- Real-time Updates (WebSocket, Server-Sent Events)
+- Optimistic Updates และ State Management
+- Error Boundaries และ Fallback Strategies
+- Performance Monitoring และ Observability
 
-### บทถัดไป
+**Architecture:**
+- Layered Architecture (Domain, Application, Infrastructure)
+- Effect-based State Management
+- Advanced Testing (Integration, E2E, Property-based)
+- Production Deployment Best Practices
 
-ในบทที่ 9 เราจะเรียนรู้:
-- **Performance Optimization** - Lazy evaluation, memoization
-- **Advanced Effect System** - Fiber, Concurrency, Resource management
-- **Production Deployment** - Monitoring, error tracking, logging
+### 8.9.3 บทถัดไป
+
+**บทที่ 9** จะพาคุณจาก Fundamentals สู่ Production-ready application:
+
+- เรียนรู้ Advanced Effect Patterns
+- สร้าง Full-featured Todo App (CRUD + Real-time)
+- Production Architecture และ Best Practices
+- Performance Optimization Techniques
+- Comprehensive Testing Strategies
+
+**พร้อมที่จะก้าวไปสู่ Production Level แล้วหรือยัง?** อ่าน Chapter 9 เลย!
 
 ---
 
