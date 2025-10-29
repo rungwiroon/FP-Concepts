@@ -14,6 +14,22 @@
 
 ---
 
+## 📚 Prerequisites - สิ่งที่ต้องรู้ก่อน
+
+บทนี้สมมติว่าคุณ**เข้าใจแนวคิดพื้นฐาน**จากบทที่ 8 แล้ว:
+
+✅ **Required Knowledge:**
+- Effect<A, E, R> type และความหมายของแต่ละตัว
+- Effect.gen syntax (Effect 3.x - ไม่มี `_` parameter)
+- Context.Tag และ Layer pattern สำหรับ dependency injection
+- การ run effects ด้วย Effect.runPromise
+- React integration basics (useEffect, useState)
+
+❓ **ถ้ายังไม่แน่ใจ:**
+→ กลับไปอ่าน **[บทที่ 8: Effect-TS Fundamentals for Frontend](./chapter-08.md)** ก่อน
+
+---
+
 ## เนื้อหาในบทนี้
 
 - ภาพรวม Frontend Architecture
@@ -22,6 +38,7 @@
 - Layers - Live & Mock Implementations
 - Effects - Business Logic
 - React Integration - Custom Hooks
+- Advanced Patterns
 - State Management with Effect
 - Error Handling & Loading States
 - Testing Strategy
@@ -31,7 +48,36 @@
 
 ## 9.1 ภาพรวม Frontend Architecture
 
-เราจะสร้าง **Todo Frontend Application** ที่ integrate กับ Backend API (จากบทที่ 5) โดยใช้ **Effect-TS** เพื่อให้มี:
+> 🎯 **สิ่งที่เราจะสร้างในบทนี้**
+>
+> ในบทที่ 8 เราได้สร้าง **Simple Todo App** ที่มี:
+> - ✅ แสดงรายการ todos (fetchTodos)
+> - ✅ เพิ่ม todo ใหม่ (createTodo)
+>
+> ในบทนี้ เราจะ**ขยายเป็น Production-Ready App** ที่มี:
+>
+> **🔧 Full CRUD Operations:**
+> - ✅ Create (เพิ่ม todo)
+> - ✅ Read (แสดงรายการ + อ่านรายการเดียว)
+> - ✅ Update (แก้ไข todo - inline editing)
+> - ✅ Delete (ลบ todo)
+> - ✅ Toggle (เปลี่ยนสถานะ completed)
+>
+> **⚡ Advanced Features:**
+> - ✅ Filters (All / Active / Completed)
+> - ✅ Statistics (นับจำนวน active/completed)
+> - ✅ Clear Completed (ลบที่เสร็จแล้วทั้งหมด)
+> - ✅ Inline Editing (double-click เพื่อแก้ไข)
+> - ✅ Keyboard Shortcuts (Enter/Escape)
+>
+> **🏗️ Production Architecture:**
+> - ✅ Domain Layer (types และ interfaces)
+> - ✅ Services Layer (TodoApi, Logger, Storage)
+> - ✅ Effects Layer (business logic with caching)
+> - ✅ Components Layer (presentation components)
+> - ✅ Comprehensive Error Handling
+> - ✅ Caching Strategies with TTL
+> - ✅ Testing Strategy
 
 ### คุณสมบัติหลัก
 
@@ -193,13 +239,14 @@ export default defineConfig({
 **src/domain/Todo.ts:**
 
 ```typescript
-// Domain entity
+// Domain entity (matches backend schema)
 export interface Todo {
-  readonly id: string;
+  readonly id: number;              // Backend uses number, not string
   readonly title: string;
-  readonly completed: boolean;
+  readonly description?: string;     // Optional description field
+  readonly isCompleted: boolean;     // Backend uses isCompleted, not completed
   readonly createdAt: Date;
-  readonly updatedAt?: Date;
+  readonly completedAt?: Date | null; // Backend uses completedAt, not updatedAt
 }
 
 // Create Todo Request
@@ -210,7 +257,8 @@ export interface CreateTodoRequest {
 // Update Todo Request
 export interface UpdateTodoRequest {
   readonly title?: string;
-  readonly completed?: boolean;
+  readonly description?: string;
+  readonly isCompleted?: boolean;   // Use isCompleted to match backend
 }
 
 // View models
@@ -574,22 +622,28 @@ import { NotFoundError } from '@/services/errors';
  */
 const createMockData = (): Todo[] => [
   {
-    id: '1',
+    id: 1,
     title: 'Learn Effect-TS',
-    completed: false,
-    createdAt: new Date('2024-01-01')
+    description: '',
+    isCompleted: false,
+    createdAt: new Date('2024-01-01'),
+    completedAt: null
   },
   {
-    id: '2',
+    id: 2,
     title: 'Build Todo App',
-    completed: false,
-    createdAt: new Date('2024-01-02')
+    description: '',
+    isCompleted: false,
+    createdAt: new Date('2024-01-02'),
+    completedAt: null
   },
   {
-    id: '3',
+    id: 3,
     title: 'Write Tests',
-    completed: true,
-    createdAt: new Date('2024-01-03')
+    description: '',
+    isCompleted: true,
+    createdAt: new Date('2024-01-03'),
+    completedAt: new Date('2024-01-03')
   }
 ];
 
@@ -615,7 +669,7 @@ export const TodoApiMock = Layer.effect(
       getById: (id: string) =>
         Effect.gen(function* () {
           const todos = yield* Ref.get(todosRef);
-          const todo = todos.find(t => t.id === id);
+          const todo = todos.find(t => t.id === Number(id));
 
           yield* Effect.sleep('50 millis');
 
@@ -629,10 +683,12 @@ export const TodoApiMock = Layer.effect(
       create: (request: CreateTodoRequest) =>
         Effect.gen(function* () {
           const newTodo: Todo = {
-            id: String(nextId++),
+            id: nextId++,
             title: request.title,
-            completed: false,
-            createdAt: new Date()
+            description: '',
+            isCompleted: false,
+            createdAt: new Date(),
+            completedAt: null
           };
 
           yield* Ref.update(todosRef, todos => [...todos, newTodo]);
@@ -644,7 +700,8 @@ export const TodoApiMock = Layer.effect(
       update: (id: string, request: UpdateTodoRequest) =>
         Effect.gen(function* () {
           const todos = yield* Ref.get(todosRef);
-          const todo = todos.find(t => t.id === id);
+          const numId = Number(id);
+          const todo = todos.find(t => t.id === numId);
 
           if (!todo) {
             return yield* Effect.fail(new NotFoundError('Todo', id));
@@ -653,11 +710,11 @@ export const TodoApiMock = Layer.effect(
           const updated: Todo = {
             ...todo,
             ...request,
-            updatedAt: new Date()
+            createdAt: todo.createdAt
           };
 
           yield* Ref.update(todosRef, todos =>
-            todos.map(t => (t.id === id ? updated : t))
+            todos.map(t => (t.id === numId ? updated : t))
           );
           yield* Effect.sleep('100 millis');
 
@@ -667,7 +724,8 @@ export const TodoApiMock = Layer.effect(
       toggle: (id: string) =>
         Effect.gen(function* () {
           const todos = yield* Ref.get(todosRef);
-          const todo = todos.find(t => t.id === id);
+          const numId = Number(id);
+          const todo = todos.find(t => t.id === numId);
 
           if (!todo) {
             return yield* Effect.fail(new NotFoundError('Todo', id));
@@ -675,12 +733,12 @@ export const TodoApiMock = Layer.effect(
 
           const updated: Todo = {
             ...todo,
-            completed: !todo.completed,
-            updatedAt: new Date()
+            isCompleted: !todo.isCompleted,
+            completedAt: !todo.isCompleted ? new Date() : null
           };
 
           yield* Ref.update(todosRef, todos =>
-            todos.map(t => (t.id === id ? updated : t))
+            todos.map(t => (t.id === numId ? updated : t))
           );
           yield* Effect.sleep('50 millis');
 
@@ -690,13 +748,14 @@ export const TodoApiMock = Layer.effect(
       delete: (id: string) =>
         Effect.gen(function* () {
           const todos = yield* Ref.get(todosRef);
-          const exists = todos.some(t => t.id === id);
+          const numId = Number(id);
+          const exists = todos.some(t => t.id === numId);
 
           if (!exists) {
             return yield* Effect.fail(new NotFoundError('Todo', id));
           }
 
-          yield* Ref.update(todosRef, todos => todos.filter(t => t.id !== id));
+          yield* Ref.update(todosRef, todos => todos.filter(t => t.id !== numId));
           yield* Effect.sleep('50 millis');
         })
     });
@@ -983,7 +1042,7 @@ export const toggleTodo = (id: string) =>
 
     const todo = yield* api.toggle(id);
 
-    yield* logger.info(`Toggled todo ${id} to ${todo.completed}`);
+    yield* logger.info(`Toggled todo ${id} to ${todo.isCompleted}`);
 
     // Invalidate cache
     yield* Effect.orElseSucceed(storage.remove(CACHE_KEY), () => undefined);
@@ -1016,9 +1075,9 @@ export const deleteTodo = (id: string) =>
 export const filterTodos = (todos: Todo[], filter: TodoFilter): Todo[] => {
   switch (filter) {
     case 'active':
-      return todos.filter(t => !t.completed);
+      return todos.filter(t => !t.isCompleted);
     case 'completed':
-      return todos.filter(t => t.completed);
+      return todos.filter(t => t.isCompleted);
     default:
       return todos;
   }
@@ -1029,8 +1088,8 @@ export const filterTodos = (todos: Todo[], filter: TodoFilter): Todo[] => {
  */
 export const calculateStats = (todos: Todo[]): TodoStats => ({
   total: todos.length,
-  active: todos.filter(t => !t.completed).length,
-  completed: todos.filter(t => t.completed).length
+  active: todos.filter(t => !t.isCompleted).length,
+  completed: todos.filter(t => t.isCompleted).length
 });
 
 /**
@@ -1060,7 +1119,7 @@ export const clearCompleted = Effect.gen(function* () {
   const todos = yield* api.fetchAll();
 
   // Filter completed
-  const completed = todos.filter(t => t.completed);
+  const completed = todos.filter(t => t.isCompleted);
 
   yield* logger.info(`Found ${completed.length} completed todos to delete`);
 
@@ -1079,9 +1138,373 @@ export const clearCompleted = Effect.gen(function* () {
 
 ---
 
-## 9.7 React Integration
+## 9.7 Advanced Patterns
 
-### 9.7.1 useRunEffect Hook
+> 💡 **หมายเหตุ:** Patterns เหล่านี้ขยายจากแนวคิดพื้นฐานในบทที่ 8
+
+ในบทที่ 8 เราได้เรียนรู้ Effect basics แล้ว ตอนนี้เรามาดู advanced patterns ที่ใช้ใน production กัน
+
+### 9.7.1 Retry with Schedule
+
+Effect-TS มี **Schedule API** ที่ powerful สำหรับการ retry:
+
+```typescript
+import { Effect, Schedule } from 'effect';
+
+// Retry 3 times with exponential backoff
+const fetchWithRetry = fetchAllTodos.pipe(
+  Effect.retry(
+    Schedule.exponential('100 millis').pipe(
+      Schedule.compose(Schedule.recurs(3))
+    )
+  )
+);
+
+// Custom retry logic - retry only on network errors
+const retryOnNetworkError = fetchAllTodos.pipe(
+  Effect.retry({
+    while: (error) => error._tag === 'NetworkError',
+    times: 3,
+    schedule: Schedule.exponential('200 millis')
+  })
+);
+
+// Retry with timeout per attempt
+const fetchWithRetryAndTimeout = fetchAllTodos.pipe(
+  Effect.timeout('5 seconds'),
+  Effect.retry(Schedule.recurs(3))
+);
+```
+
+**Use Case จริง:**
+```typescript
+// Retry API call with increasing delays
+export const fetchTodosWithRetry = fetchAllTodos.pipe(
+  Effect.retry(
+    Schedule.exponential('100 millis', 2).pipe( // 100ms, 200ms, 400ms...
+      Schedule.compose(Schedule.recurs(3)),      // max 3 retries
+      Schedule.jittered                          // add randomness
+    )
+  ),
+  Effect.tapError((error) =>
+    Effect.gen(function* () {
+      const logger = yield* Logger;
+      yield* logger.error('Failed after retries', error);
+    })
+  )
+);
+```
+
+### 9.7.2 Timeout Handling
+
+```typescript
+import { Effect, Duration } from 'effect';
+
+// Simple timeout
+const fetchWithTimeout = fetchAllTodos.pipe(
+  Effect.timeout(Duration.seconds(5))
+);
+
+// Timeout with fallback value
+const fetchWithFallback = fetchAllTodos.pipe(
+  Effect.timeout(Duration.seconds(5)),
+  Effect.catchTag('TimeoutException', () =>
+    Effect.succeed([]) // Return empty array on timeout
+  )
+);
+
+// Timeout with cache fallback
+const fetchWithCacheFallback = Effect.gen(function* () {
+  const storage = yield* Storage;
+
+  return yield* Effect.timeout(
+    fetchAllTodos,
+    Duration.seconds(3)
+  ).pipe(
+    // Fallback to cache on timeout
+    Effect.catchAll(() =>
+      Effect.gen(function* () {
+        const cached = yield* storage.get<Todo[]>('todos_backup');
+        return cached ?? [] as Todo[];
+      })
+    )
+  );
+});
+```
+
+### 9.7.3 Caching Strategies
+
+เราใช้ caching ใน `fetchAllTodos` แล้ว (Section 9.6) แต่นี่คือ patterns เพิ่มเติม:
+
+```typescript
+// 1. Cache with TTL (Time-To-Live) - เรามีอยู่แล้ว
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// 2. Conditional caching - cache เฉพาะ success (Functional Style)
+const cachedFetch = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const storage = yield* Storage;
+  const cached = yield* storage.get<Todo[]>('todos');
+
+  const fetchAndCache = Effect.gen(function* () {
+    const fresh = yield* api.fetchAll();
+    yield* storage.set('todos', fresh);
+    return fresh;
+  });
+
+  // Use cached if valid, otherwise fetch fresh
+  return yield* (cached && isValid(cached)
+    ? Effect.succeed(cached)
+    : fetchAndCache
+  );
+});
+
+// 3. Cache invalidation strategies
+const invalidateCache = (key: string) =>
+  Effect.gen(function* () {
+    const storage = yield* Storage;
+    yield* storage.remove(key);
+  });
+
+// 4. Cache warming (pre-populate cache)
+const warmCache = Effect.gen(function* () {
+  const storage = yield* Storage;
+  const todos = yield* api.fetchAll();
+
+  yield* storage.set('todos_cache', {
+    data: todos,
+    timestamp: Date.now()
+  });
+
+  return todos;
+});
+
+// 5. Stale-While-Revalidate pattern - Functional Style
+const fetchWithSWR = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const storage = yield* Storage;
+  const cached = yield* storage.get<{ data: Todo[]; timestamp: number }>('todos');
+
+  const fetchAndCache = Effect.gen(function* () {
+    const fresh = yield* api.fetchAll();
+    yield* storage.set('todos', { data: fresh, timestamp: Date.now() });
+    return fresh;
+  });
+
+  // Use Option to handle nullable cached value
+  return yield* (cached
+    ? Effect.succeed(cached).pipe(
+        Effect.tap((cache) =>
+          // Revalidate in background if stale
+          Effect.when(
+            fetchAndCache.pipe(Effect.fork),
+            () => Date.now() - cache.timestamp > CACHE_TTL
+          )
+        ),
+        Effect.map(cache => cache.data)
+      )
+    : fetchAndCache
+  );
+});
+```
+
+### 9.7.4 Parallel Execution with Concurrency Limits
+
+```typescript
+import { Effect } from 'effect';
+
+// ❌ Bad - Parallel without limit (อาจ overwhelm server)
+const deleteAllBad = (ids: string[]) =>
+  Effect.all(ids.map(id => deleteTodo(id)));
+
+// ✅ Good - Parallel with concurrency limit
+const deleteAllSafe = (ids: string[]) =>
+  Effect.all(
+    ids.map(id => deleteTodo(id)),
+    { concurrency: 5 } // Max 5 concurrent requests
+  );
+
+// Different concurrency strategies
+const fetchMultiple = (ids: string[]) =>
+  Effect.all(
+    ids.map(id => getTodoById(id)),
+    {
+      concurrency: 10,
+      mode: 'either' // Continue even if some fail
+    }
+  );
+
+// Batch processing with concurrency
+const processBatch = (todos: Todo[]) =>
+  Effect.all(
+    todos.map(todo => updateTodo(todo.id, { processed: true })),
+    {
+      concurrency: 3,
+      discard: false // Keep all results
+    }
+  );
+```
+
+**Use Case จริง - Clear Completed:**
+```typescript
+// เรามีใน Section 9.6 แล้ว แต่นี่คือ explanation
+export const clearCompleted = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const todos = yield* api.fetchAll();
+
+  const completed = todos.filter(t => t.completed);
+
+  // Delete all completed in parallel but limit to 5 concurrent
+  yield* Effect.all(
+    completed.map(t => api.delete(t.id)),
+    { concurrency: 5 } // ⭐ Prevent overwhelming server
+  );
+});
+```
+
+### 9.7.5 Error Recovery Patterns
+
+```typescript
+// 1. Fallback to cache on error - Functional Style
+const fetchWithCacheFallback = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const storage = yield* Storage;
+  const logger = yield* Logger;
+
+  return yield* api.fetchAll().pipe(
+    // On error, try cache fallback
+    Effect.catchAll(() =>
+      Effect.gen(function* () {
+        const cached = yield* storage.get<Todo[]>('todos_cache');
+
+        return yield* (cached
+          ? logger.warn('Using cached data due to API failure').pipe(
+              Effect.map(() => cached)
+            )
+          : logger.error('No cache available, returning empty').pipe(
+              Effect.map(() => [] as Todo[])
+            )
+        );
+      })
+    )
+  );
+});
+
+// 2. Circuit Breaker Pattern - Fully Functional with Ref
+const CIRCUIT_BREAK_THRESHOLD = 5;
+const CIRCUIT_RESET_TIMEOUT = 60000; // 1 minute
+
+const makeCircuitBreaker = <A, E, R>(
+  effect: Effect.Effect<A, E, R>
+) =>
+  Effect.gen(function* () {
+    const failureCount = yield* Ref.make(0);
+
+    return Effect.gen(function* () {
+      const count = yield* failureCount.get;
+
+      // Check circuit state and conditionally execute
+      return yield* Effect.if(
+        count >= CIRCUIT_BREAK_THRESHOLD,
+        {
+          // Circuit is open - fail immediately
+          onTrue: () => Effect.fail(
+            new NetworkError('Circuit breaker open - too many failures')
+          ),
+          // Circuit is closed - try the effect
+          onFalse: () => effect.pipe(
+            Effect.tap(() => failureCount.set(0)), // Reset on success
+            Effect.catchAll((error) =>
+              Effect.gen(function* () {
+                yield* failureCount.update(n => n + 1);
+
+                // Schedule circuit reset
+                yield* Effect.async<void>((resume) => {
+                  setTimeout(() => {
+                    Effect.runPromise(failureCount.set(0));
+                    resume(Effect.void);
+                  }, CIRCUIT_RESET_TIMEOUT);
+                }).pipe(Effect.fork);
+
+                return yield* Effect.fail(error);
+              })
+            )
+          )
+        }
+      );
+    });
+  });
+
+// Usage
+const fetchWithCircuitBreaker = Effect.gen(function* () {
+  const breaker = yield* makeCircuitBreaker(fetchAllTodos);
+  return yield* breaker;
+});
+
+// 3. Graceful Degradation - Functional Style
+const fetchWithDegradation = Effect.gen(function* () {
+  const api = yield* TodoApi;
+  const storage = yield* Storage;
+  const logger = yield* Logger;
+
+  // Try multiple fallback strategies using Effect.orElse
+  return yield* api.fetchAll().pipe(
+    // Fallback 1: Try cached data
+    Effect.orElse(() =>
+      Effect.gen(function* () {
+        const cached = yield* storage.get<Todo[]>('todos');
+        return cached ?? yield* Effect.fail('No cache');
+      })
+    ),
+    // Fallback 2: Try partial data (active only)
+    Effect.orElse(() =>
+      api.fetchAll().pipe(
+        Effect.map(todos => todos.filter(t => !t.isCompleted))
+      )
+    ),
+    // Fallback 3: Return empty array with logging
+    Effect.catchAll(() =>
+      logger.error('All fallbacks failed, returning empty').pipe(
+        Effect.map(() => [] as Todo[])
+      )
+    )
+  );
+});
+```
+
+### 9.7.6 Resource Management
+
+```typescript
+// Automatic cleanup with Effect.acquireRelease
+const withDatabase = <A, E>(
+  action: (db: Database) => Effect.Effect<A, E, never>
+) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      console.log('Opening database connection');
+      return new Database();
+    }),
+    (db) =>
+      Effect.sync(() => {
+        console.log('Closing database connection');
+        db.close();
+      })
+  ).pipe(Effect.flatMap(action));
+
+// Usage
+const fetchWithDb = withDatabase((db) =>
+  Effect.gen(function* () {
+    const todos = yield* Effect.tryPromise(() => db.query('SELECT * FROM todos'));
+    return todos;
+  })
+);
+```
+
+---
+
+## 9.8 React Integration
+
+### 9.8.1 useRunEffect Hook
 
 **src/hooks/useRunEffect.ts:**
 
@@ -1147,7 +1570,7 @@ export function useRunEffect<A, E>(
 }
 ```
 
-### 9.7.2 useTodos Hook
+### 9.8.2 useTodos Hook
 
 **src/hooks/useTodos.ts:**
 
@@ -1263,9 +1686,9 @@ export function useTodos(filter: TodoFilter = 'all') {
 
 ---
 
-## 9.8 Components
+## 9.9 Components
 
-### 9.8.1 TodoList Component
+### 9.9.1 TodoList Component
 
 **src/components/TodoList.tsx:**
 
@@ -1311,7 +1734,7 @@ export function TodoList({
 }
 ```
 
-### 9.8.2 TodoItem Component
+### 9.9.2 TodoItem Component
 
 **src/components/TodoItem.tsx:**
 
@@ -1381,11 +1804,11 @@ export function TodoItem({ todo, onToggle, onDelete, onUpdate }: TodoItemProps) 
   };
 
   return (
-    <li className={clsx('todo-item', { completed: todo.completed, loading })}>
+    <li className={clsx('todo-item', { completed: todo.isCompleted, loading })}>
       <div className="todo-item-content">
         <input
           type="checkbox"
-          checked={todo.completed}
+          checked={todo.isCompleted}
           onChange={handleToggle}
           disabled={loading}
         />
@@ -1437,7 +1860,7 @@ export function TodoItem({ todo, onToggle, onDelete, onUpdate }: TodoItemProps) 
 }
 ```
 
-### 9.8.3 AddTodoForm Component
+### 9.9.3 AddTodoForm Component
 
 **src/components/AddTodoForm.tsx:**
 
@@ -1502,7 +1925,7 @@ export function AddTodoForm({ onAdd }: AddTodoFormProps) {
 }
 ```
 
-### 9.8.4 TodoFilters Component
+### 9.9.4 TodoFilters Component
 
 **src/components/TodoFilters.tsx:**
 
@@ -1588,7 +2011,7 @@ export function TodoFilters({
 }
 ```
 
-### 9.8.5 App Component
+### 9.9.5 App Component
 
 **src/App.tsx:**
 
@@ -1663,9 +2086,9 @@ export default App;
 
 ---
 
-## 9.9 Testing
+## 9.10 Testing
 
-### 9.9.1 Testing Effects with Mock Layer
+### 9.10.1 Testing Effects with Mock Layer
 
 **src/effects/__tests__/todos.test.ts:**
 
@@ -1697,7 +2120,7 @@ describe('Todo Effects', () => {
       const todo = await Effect.runPromise(program);
 
       expect(todo.title).toBe('New Todo');
-      expect(todo.completed).toBe(false);
+      expect(todo.isCompleted).toBe(false);
     });
 
     it('should reject empty title', async () => {
@@ -1730,15 +2153,15 @@ describe('Todo Effects', () => {
         // Get initial todo
         const todos = yield* fetchAllTodos;
         const todo = todos[0];
-        expect(todo.completed).toBe(false);
+        expect(todo.isCompleted).toBe(false);
 
         // Toggle it
         const toggled = yield* toggleTodo(todo.id);
-        expect(toggled.completed).toBe(true);
+        expect(toggled.isCompleted).toBe(true);
 
         // Toggle back
         const toggledBack = yield* toggleTodo(todo.id);
-        expect(toggledBack.completed).toBe(false);
+        expect(toggledBack.isCompleted).toBe(false);
       }).pipe(Effect.provide(AppLayerMock));
 
       await Effect.runPromise(program);
@@ -1747,7 +2170,7 @@ describe('Todo Effects', () => {
 });
 ```
 
-### 9.9.2 Testing React Components
+### 9.10.2 Testing React Components
 
 **src/components/__tests__/TodoList.test.tsx:**
 
@@ -1760,16 +2183,20 @@ import type { Todo } from '@/domain/Todo';
 describe('TodoList', () => {
   const mockTodos: Todo[] = [
     {
-      id: '1',
+      id: 1,
       title: 'Test Todo 1',
-      completed: false,
-      createdAt: new Date()
+      description: '',
+      isCompleted: false,
+      createdAt: new Date(),
+      completedAt: null
     },
     {
-      id: '2',
+      id: 2,
       title: 'Test Todo 2',
-      completed: true,
-      createdAt: new Date()
+      description: '',
+      isCompleted: true,
+      createdAt: new Date(),
+      completedAt: new Date()
     }
   ];
 
@@ -1804,9 +2231,11 @@ describe('TodoList', () => {
 
 ---
 
-## 9.10 Best Practices
+## 9.11 Best Practices - Production-Ready Code
 
-### 9.10.1 Service Design
+> 💡 **หมายเหตุ:** ส่วนนี้รวม best practices จากบทที่ 8 และเพิ่มเติมสำหรับ production
+
+### 9.11.1 Service Design
 
 **DO:**
 - ✅ แยก services ตาม responsibility (TodoApi, Logger, Storage)
@@ -1818,7 +2247,7 @@ describe('TodoList', () => {
 - ❌ ใช้ generic `Error` type
 - ❌ Throw exceptions ใน service implementations
 
-### 9.10.2 Effect Composition
+### 9.11.2 Effect Composition
 
 **DO:**
 - ✅ ใช้ `Effect.gen` สำหรับ sequential operations
@@ -1830,7 +2259,7 @@ describe('TodoList', () => {
 - ❌ Run effects sequentially เมื่อสามารถทำ parallel ได้
 - ❌ Catch errors เร็วเกินไป (ทำให้ lost context)
 
-### 9.10.3 React Integration
+### 9.11.3 React Integration
 
 **DO:**
 - ✅ ใช้ custom hooks (`useRunEffect`, `useTodos`)
@@ -1842,7 +2271,7 @@ describe('TodoList', () => {
 - ❌ Create new effects ทุกครั้งที่ render
 - ❌ Forget cleanup ใน `useEffect`
 
-### 9.10.4 Performance
+### 9.11.4 Performance
 
 **DO:**
 - ✅ Cache data เมื่อเหมาะสม (ดูใน `fetchAllTodos`)
@@ -1856,7 +2285,24 @@ describe('TodoList', () => {
 
 ---
 
-## 9.11 สรุป
+## 9.12 สรุป
+
+### Learning Journey: Chapter 8 → Chapter 9
+
+ตารางเปรียบเทียบสิ่งที่เรียนรู้จากทั้งสองบท:
+
+| Aspect | Chapter 8 (Fundamentals) | Chapter 9 (Production) |
+|--------|--------------------------|------------------------|
+| **Focus** | Concepts & Basic Patterns | Production Architecture |
+| **CRUD Operations** | Read + Create (2 ops) | Full CRUD (6+ ops) |
+| **Services** | 1 service (TodoApi) | 3 services (TodoApi, Logger, Storage) |
+| **Error Types** | 1 type (ApiError) | 4 types (Network, NotFound, Validation, Unauthorized) |
+| **State Management** | None | Ref.make for stateful mocks |
+| **Caching** | None | TTL-based caching |
+| **Advanced Patterns** | None | Retry, Timeout, Parallel, Circuit Breaker |
+| **Components** | Simple (display only) | Feature-rich (inline edit, filters, stats) |
+| **Testing** | Basic examples | Comprehensive suite |
+| **Time to Complete** | 15-20 minutes | 2-3 hours |
 
 ### สิ่งที่ได้เรียนรู้ในบทนี้
 
@@ -1897,13 +2343,19 @@ describe('TodoList', () => {
 4. **Composability** - ต่อ effects ได้สวยงาม
 5. **Error Handling** - Errors เป็น values, จัดการได้เป็นระบบ
 
-### บทถัดไป
+---
 
-ในบทที่ 10 เราจะเรียนรู้:
-- **Advanced React Integration** - Context providers, custom hooks
-- **State Management** - Global state with Effect
-- **Real-time Updates** - WebSocket, Server-Sent Events
-- **Form Validation** - Complex forms with Effect-TS
+### 🔙 Review Chapter 8
+
+ถ้ายังสับสนเรื่อง Effect-TS basics:
+→ กลับไปทบทวน **[บทที่ 8: Effect-TS Fundamentals](./chapter-08.md)**
+
+### 🚀 Next Steps
+
+ในบทถัดไป เราจะเรียนรู้:
+- **บทที่ 10:** Validation และ Form Handling
+- **บทที่ 11:** Real-time Features (WebSocket, SSE)
+- **บทที่ 12:** Testing Strategies (E2E, Integration)
 
 ---
 
