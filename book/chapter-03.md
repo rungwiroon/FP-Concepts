@@ -12,6 +12,7 @@
 - การติดตั้งและ Setup โปรเจค
 - ตัวอย่างแรก - สร้าง Simple Effect
 - โครงสร้าง Architecture
+- Extension Operators (v5.0.0-beta-56+)
 - แบบฝึกหัด
 
 ---
@@ -940,7 +941,157 @@ public async Task Create_ShouldLogCorrectly()
 
 ---
 
-## 3.10 สรุป
+## 3.10 Extension Operators (v5.0.0-beta-56+)
+
+> ⚠️ **หมายเหตุ**: Feature นี้ต้องการ **.NET 10.0** และ **language-ext v5.0.0-beta-56** ขึ้นไป
+> เป็น optional syntax - ยังคงใช้ LINQ query syntax ได้ตามปกติ
+
+ตั้งแต่ v5.0.0-beta-56 language-ext เพิ่ม **Extension Operators** ที่ช่วยให้เขียนโค้ดสั้นลงโดยใช้ operators แทน method calls
+
+### 3.10.1 Operators ที่เพิ่มเข้ามา
+
+| Operator | ชื่อ | แทน | ตัวอย่าง |
+|----------|------|-----|----------|
+| `*` | Functor Map | `.Map()` | `(x => x + 1) * mx` |
+| `>>` | Monad Bind/Sequence | `.Bind()` / `>>` | `mx >> my` |
+| `\|` | Choice/Fallback | `.OrElse()` | `operation \| fallbackValue` |
+| `+` (prefix) | Downcast | `.As()` | `+mx` |
+
+### 3.10.2 ตัวอย่างการใช้งาน
+
+**Functor Map (`*`)**
+
+```csharp
+// ❌ แบบเดิม (verbose)
+var result = mx.Map(x => x + 1);
+
+// ✅ ด้วย operator (concise)
+var result = (x => x + 1) * mx;
+
+// ตัวอย่างจริง
+Option<int> opt = Some(10);
+var doubled = ((int x) => x * 2) * opt;  // Some(20)
+```
+
+**Applicative (`*` หลายตัว)**
+
+```csharp
+// Apply function กับหลาย arguments
+Option<int> mx = Some(1);
+Option<int> my = Some(2);
+Option<int> mz = Some(3);
+
+// ❌ แบบเดิม
+var result = (mx, my, mz).Apply((x, y, z) => x + y + z);
+
+// ✅ ด้วย operators
+var result = ((int x, int y, int z) => x + y + z) * mx * my * mz;
+// result = Some(6)
+```
+
+**Monad Bind/Sequence (`>>`)**
+
+```csharp
+// Sequence - ทำ mx แล้วทำ my (ไม่สนใจผลลัพธ์ของ mx)
+// ❌ แบบเดิม
+var result = mx.Bind(_ => my);
+
+// ✅ ด้วย operator
+var result = mx >> my;
+
+// Bind - ใช้ผลลัพธ์จาก mx ใน my
+// ❌ แบบเดิม
+var result = readLine.Bind(line => parseInt(line));
+
+// ✅ ด้วย operator (ต้องระบุ type)
+var result = readLine >> parseInt<IO>;
+```
+
+**Choice/Fallback (`|`)**
+
+```csharp
+// ❌ แบบเดิม
+var result = operation.IfFail(fallbackValue);
+var result = operation.IfFail(Error.New("Error message"));
+
+// ✅ ด้วย operator
+var result = operation | fallbackValue;
+var result = operation | "Error message";
+
+// ตัวอย่างจริง - Try with fallback
+Option<int> maybe = None;
+var withDefault = maybe | 0;  // 0
+
+Either<Error, int> risky = Left(Error.New("failed"));
+var safe = risky | 42;  // 42
+```
+
+**Downcast (`+` prefix)**
+
+```csharp
+// ❌ แบบเดิม - ต้องใส่ .As() และวงเล็บเยอะ
+var result = (
+    from x in GetValue()
+    from y in Calculate(x)
+    select x + y
+).As();
+
+// ✅ ด้วย operator - สะอาดกว่า
+var result = +(
+    from x in GetValue()
+    from y in Calculate(x)
+    select x + y
+);
+```
+
+### 3.10.3 Types ที่รองรับ (v5.0.0-beta-57+)
+
+Operators ถูก implement สำหรับ 15 core types:
+
+- **Effect Types**: `IO<A>`, `Eff<A>`, `Eff<RT, A>`
+- **Option/Either**: `Option<A>`, `Either<L, R>`, `OptionT<M, A>`, `EitherT<L, M, R>`
+- **Validation**: `Validation<F, A>`, `ValidationT<F, M, A>`
+- **Error Handling**: `Fin<A>`, `FinT<M, A>`, `Try<A>`, `TryT<M, A>`
+- **Others**: `These<A, B>`, `ChronicleT<Ch, M, A>`
+
+### 3.10.4 เปรียบเทียบ: LINQ vs Operators
+
+```csharp
+// ตัวอย่าง: Fetch user และ orders
+
+// ✅ LINQ Query Syntax (recommended สำหรับ complex flows)
+var result =
+    from user in GetUser(userId)
+    from orders in GetOrders(user.Id)
+    from _ in LogInfo($"Found {orders.Count} orders")
+    select orders;
+
+// ✅ Operators (good for simple chains)
+var result = GetUser(userId)
+    >> (user => GetOrders(user.Id))
+    >> (orders => LogInfo($"Found {orders.Count} orders") >> IO.Pure(orders));
+```
+
+### 3.10.5 เมื่อไหร่ควรใช้ Operators?
+
+**✅ ใช้ Operators เมื่อ:**
+- Chain operations สั้นๆ (2-3 steps)
+- Map หรือ Apply ง่ายๆ
+- ต้องการ fallback values
+- คุ้นเคยกับ Haskell-style operators
+
+**❌ ใช้ LINQ Query Syntax เมื่อ:**
+- Logic ซับซ้อน (4+ steps)
+- ต้องการ readability สูง
+- ทำงานในทีมที่ไม่คุ้น FP operators
+- ต้องรองรับ .NET versions ก่อน 10.0
+
+> 💡 **คำแนะนำ**: เริ่มต้นด้วย LINQ query syntax ก่อน เพราะอ่านง่ายกว่า
+> ค่อยๆ เปลี่ยนไปใช้ operators เมื่อคุ้นเคยและต้องการโค้ดที่กระชับขึ้น
+
+---
+
+## 3.11 สรุป
 
 ### สิ่งที่เรียนรู้ในบทนี้
 
@@ -971,7 +1122,7 @@ from capability in Has<M, RT, T>.ask
 
 ---
 
-## 3.11 แบบฝึกหัด
+## 3.12 แบบฝึกหัด
 
 ### แบบฝึกหัดที่ 1: สร้าง FileIO Capability
 
