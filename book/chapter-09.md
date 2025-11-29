@@ -38,6 +38,7 @@
 - Layers - Live & Mock Implementations
 - Effects - Business Logic
 - React Integration - Custom Hooks
+- Immer สำหรับ Complex State Updates
 - Advanced Patterns
 - State Management with Effect
 - Error Handling & Loading States
@@ -1683,6 +1684,294 @@ export function useTodos(filter: TodoFilter = 'all') {
   };
 }
 ```
+
+### 9.8.3 Immer สำหรับ Complex State Updates (Optional)
+
+เมื่อ state มีความซับซ้อน การใช้ spread operators อาจทำให้โค้ดอ่านยาก **Immer** ช่วยให้เขียน immutable updates ด้วย syntax ที่ดูเหมือน mutation ปกติ
+
+**ติดตั้ง:**
+
+```bash
+npm install immer use-immer
+```
+
+#### ปัญหาของ Spread Operators
+
+```typescript
+// ❌ Nested spread - อ่านยาก, error-prone
+const handleUpdateNested = () => {
+  setState(prev => ({
+    ...prev,
+    user: {
+      ...prev.user,
+      profile: {
+        ...prev.user.profile,
+        settings: {
+          ...prev.user.profile.settings,
+          theme: 'dark'
+        }
+      }
+    }
+  }));
+};
+
+// ❌ Array update - verbose
+const handleToggle = (id: number) => {
+  setTodos(prev =>
+    prev.map(todo =>
+      todo.id === id
+        ? { ...todo, isCompleted: !todo.isCompleted }
+        : todo
+    )
+  );
+};
+```
+
+#### Immer ทำให้ง่ายขึ้น
+
+**src/hooks/useTodosWithImmer.ts:**
+
+```typescript
+import { useCallback } from 'react';
+import { useImmer } from 'use-immer';
+import { Effect } from 'effect';
+import type { Todo, TodoFilter, TodoStats } from '@/domain/Todo';
+import type { TodoError } from '@/services/errors';
+import * as todoEffects from '@/effects/todos';
+import { AppLayer } from '@/layers';
+
+interface TodoState {
+  todos: Todo[];
+  filter: TodoFilter;
+  loading: boolean;
+  error: TodoError | null;
+  // For optimistic updates
+  pendingUpdates: Set<number>;
+}
+
+const initialState: TodoState = {
+  todos: [],
+  filter: 'all',
+  loading: true,
+  error: null,
+  pendingUpdates: new Set()
+};
+
+export function useTodosWithImmer() {
+  const [state, updateState] = useImmer<TodoState>(initialState);
+
+  // Fetch todos
+  const fetchTodos = useCallback(async () => {
+    updateState(draft => {
+      draft.loading = true;
+      draft.error = null;
+    });
+
+    try {
+      const todos = await Effect.runPromise(
+        todoEffects.fetchAllTodos.pipe(Effect.provide(AppLayer))
+      );
+
+      updateState(draft => {
+        draft.todos = todos;
+        draft.loading = false;
+      });
+    } catch (err) {
+      updateState(draft => {
+        draft.error = err as TodoError;
+        draft.loading = false;
+      });
+    }
+  }, [updateState]);
+
+  // Toggle with optimistic update
+  const handleToggle = useCallback(async (id: number) => {
+    // 1. Optimistic update - UI responds immediately
+    updateState(draft => {
+      const todo = draft.todos.find(t => t.id === id);
+      if (todo) {
+        todo.isCompleted = !todo.isCompleted;
+        todo.completedAt = todo.isCompleted ? new Date() : null;
+      }
+      draft.pendingUpdates.add(id);
+    });
+
+    try {
+      // 2. Call API
+      await Effect.runPromise(
+        todoEffects.toggleTodo(String(id)).pipe(Effect.provide(AppLayer))
+      );
+
+      // 3. Clear pending
+      updateState(draft => {
+        draft.pendingUpdates.delete(id);
+      });
+    } catch (err) {
+      // 4. Revert on error
+      updateState(draft => {
+        const todo = draft.todos.find(t => t.id === id);
+        if (todo) {
+          todo.isCompleted = !todo.isCompleted;
+          todo.completedAt = todo.isCompleted ? new Date() : null;
+        }
+        draft.pendingUpdates.delete(id);
+        draft.error = err as TodoError;
+      });
+    }
+  }, [updateState]);
+
+  // Update todo title (inline editing)
+  const handleUpdate = useCallback(async (id: number, title: string) => {
+    const originalTitle = state.todos.find(t => t.id === id)?.title;
+
+    // Optimistic update
+    updateState(draft => {
+      const todo = draft.todos.find(t => t.id === id);
+      if (todo) {
+        todo.title = title;
+      }
+      draft.pendingUpdates.add(id);
+    });
+
+    try {
+      await Effect.runPromise(
+        todoEffects.updateTodo(String(id), { title }).pipe(Effect.provide(AppLayer))
+      );
+
+      updateState(draft => {
+        draft.pendingUpdates.delete(id);
+      });
+    } catch (err) {
+      // Revert
+      updateState(draft => {
+        const todo = draft.todos.find(t => t.id === id);
+        if (todo && originalTitle) {
+          todo.title = originalTitle;
+        }
+        draft.pendingUpdates.delete(id);
+        draft.error = err as TodoError;
+      });
+    }
+  }, [state.todos, updateState]);
+
+  // Delete with optimistic update
+  const handleDelete = useCallback(async (id: number) => {
+    const deletedTodo = state.todos.find(t => t.id === id);
+    const deletedIndex = state.todos.findIndex(t => t.id === id);
+
+    // Optimistic - remove immediately
+    updateState(draft => {
+      draft.todos = draft.todos.filter(t => t.id !== id);
+    });
+
+    try {
+      await Effect.runPromise(
+        todoEffects.deleteTodo(String(id)).pipe(Effect.provide(AppLayer))
+      );
+    } catch (err) {
+      // Revert - restore at original position
+      if (deletedTodo) {
+        updateState(draft => {
+          draft.todos.splice(deletedIndex, 0, deletedTodo);
+          draft.error = err as TodoError;
+        });
+      }
+    }
+  }, [state.todos, updateState]);
+
+  // Filter change
+  const setFilter = useCallback((filter: TodoFilter) => {
+    updateState(draft => {
+      draft.filter = filter;
+    });
+  }, [updateState]);
+
+  // Computed values
+  const filteredTodos = state.todos.filter(todo => {
+    switch (state.filter) {
+      case 'active': return !todo.isCompleted;
+      case 'completed': return todo.isCompleted;
+      default: return true;
+    }
+  });
+
+  const stats: TodoStats = {
+    total: state.todos.length,
+    active: state.todos.filter(t => !t.isCompleted).length,
+    completed: state.todos.filter(t => t.isCompleted).length
+  };
+
+  return {
+    todos: filteredTodos,
+    allTodos: state.todos,
+    stats,
+    filter: state.filter,
+    loading: state.loading,
+    error: state.error,
+    pendingUpdates: state.pendingUpdates,
+    fetchTodos,
+    toggleTodo: handleToggle,
+    updateTodo: handleUpdate,
+    deleteTodo: handleDelete,
+    setFilter
+  };
+}
+```
+
+#### เปรียบเทียบ: useState vs useImmer
+
+| Aspect | useState + Spread | useImmer |
+|--------|-------------------|----------|
+| **Nested updates** | Verbose, error-prone | Clean, intuitive |
+| **Array mutations** | ต้องใช้ map/filter | ใช้ push/splice ได้ |
+| **Optimistic updates** | ซับซ้อน | ง่ายกว่า |
+| **Bundle size** | 0KB | ~12KB |
+| **Learning curve** | ต่ำ | ต่ำ (เหมือนเขียน mutable) |
+
+#### เมื่อไหร่ควรใช้ Immer?
+
+**✅ ใช้ Immer เมื่อ:**
+- State มี nested objects ลึก 2+ levels
+- ต้องการ optimistic updates
+- มี array operations หลายจุด
+- โค้ด spread operators ยาวเกิน 3-4 บรรทัด
+
+**❌ ไม่จำเป็นต้องใช้เมื่อ:**
+- State เป็น flat object หรือ primitive
+- Update แค่ 1-2 fields
+- ต้องการลด bundle size ให้น้อยที่สุด
+
+#### Immer กับ Effect-TS
+
+Immer และ Effect-TS ทำงานคนละหน้าที่และใช้ร่วมกันได้ดี:
+
+```typescript
+// Effect-TS: จัดการ async operations และ business logic
+const toggleTodoEffect = (id: string) =>
+  Effect.gen(function* () {
+    const api = yield* TodoApi;
+    const logger = yield* Logger;
+
+    yield* logger.info(`Toggling todo ${id}`);
+    return yield* api.toggle(id);
+  });
+
+// Immer: จัดการ React state updates
+const handleToggle = async (id: number) => {
+  // Immer สำหรับ optimistic update
+  updateState(draft => {
+    const todo = draft.todos.find(t => t.id === id);
+    if (todo) todo.isCompleted = !todo.isCompleted;
+  });
+
+  // Effect-TS สำหรับ API call
+  await Effect.runPromise(
+    toggleTodoEffect(String(id)).pipe(Effect.provide(AppLayer))
+  );
+};
+```
+
+> 💡 **สรุป**: Immer เป็น optional tool ที่ช่วยให้โค้ด state management อ่านง่ายขึ้น โดยเฉพาะเมื่อมี nested updates หรือ optimistic updates ไม่จำเป็นต้องใช้ทุกโปรเจค แต่มีประโยชน์เมื่อ state ซับซ้อน
 
 ---
 
